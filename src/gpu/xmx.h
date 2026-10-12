@@ -32,6 +32,9 @@ int xmx_portable(void);
 /* The N of the device's FP16->FP32 cooperative-matrix tile (16 on Xe2, 8 on Xe-HPG, 0
  * before the device is open). The host names the matching kernel variant with it. */
 int xmx_coopmat_n(void);
+/* The N of the device's integer (sint8->sint32) cooperative-matrix tile, or 0 before the
+ * device is open; Xe2 exposes N=16, Xe-HPG N=8. */
+int xmx_coopmat_int8_n(void);
 int xmx_window_gather(void);
 int xmx_device_lost(void);
 const char *xmx_error(void);

@@ -29,21 +29,45 @@ def check(name, ok, detail=""):
 
 
 def loaded_shaders():
-    """The SPIR-V the runtime opens: the device path's modules and libxmx itself."""
+    """The SPIR-V the runtime opens: the device path's modules and libxmx itself.
+
+    A name has to begin a token and start with a letter. Both matter: `libxmx.c` builds
+    the `_n8` sibling's name with the fragment `"_n8.spv"`, whose tail `n8.spv` would
+    otherwise read as a shader the build systems never made.
+    """
     names = set()
     for path in ("src/gpu/xmxres.py", "src/gpu/xmx.py", "src/gpu/libxmx.c"):
-        names |= set(re.findall(r"([A-Za-z0-9_]+\.spv)",
+        names |= set(re.findall(r"(?<![A-Za-z0-9_])[A-Za-z][A-Za-z0-9_]*\.spv",
                                 (ROOT / path).read_text(encoding="utf-8")))
     return names
 
 
-def make_shaders(text):
-    """{spv: (source, defines)} from the Makefile's rules."""
+def make_vars(text):
+    """NAME -> value for the Makefile's assignments, so a `-DNAME=$(VAR)` define can be
+    compared with CMake's already-expanded one."""
+    return {m.group(1): m.group(2).strip()
+            for m in re.finditer(r"^([A-Za-z_][A-Za-z0-9_]*)\s*[:?]?=[ \t]*(.*)$", text, re.M)}
+
+
+def expand(value, variables):
+    """Substitute `$(NAME)` from `variables` until it settles (nested assigns included)."""
+    for _ in range(10):
+        replaced = re.sub(r"\$\(([A-Za-z_][A-Za-z0-9_]*)\)",
+                          lambda m: variables.get(m.group(1), m.group(0)), value)
+        if replaced == value:
+            break
+        value = replaced
+    return value
+
+
+def make_shaders(text, variables):
+    """{spv: (source, defines)} from the Makefile's rules, its variables expanded."""
     rules = {}
     text = text.replace("\\\n", " ")                  # join continued prerequisite lines
     for match in re.finditer(r"^work/([A-Za-z0-9_]+\.spv):\s*(\S+)[^\n]*\n\t\$\(GLSL\)([^\n]*)",
                              text, re.M):
-        defines = tuple(sorted(re.findall(r"-D\S+", match.group(3))))
+        defines = tuple(sorted(expand(d, variables)
+                               for d in re.findall(r"-D\S+", match.group(3))))
         rules[match.group(1)] = (match.group(2), defines)
     return rules
 
@@ -79,7 +103,7 @@ def main():
     make = (ROOT / "Makefile").read_text(encoding="utf-8")
     cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
     loaded = loaded_shaders()
-    in_make, in_cmake = make_shaders(make), cmake_shaders(cmake)
+    in_make, in_cmake = make_shaders(make, make_vars(make)), cmake_shaders(cmake)
     check(f"the runtime's {len(loaded)} shaders are all built by make",
           loaded <= set(in_make), ", ".join(sorted(loaded - set(in_make))))
     check(f"and all built by CMake", loaded <= set(in_cmake),

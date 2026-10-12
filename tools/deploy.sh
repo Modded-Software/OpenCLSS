@@ -35,7 +35,12 @@
 # ============================================================================
 set -euo pipefail
 
+# A launcher can run this through /proc/self/fd, where BASH_SOURCE names a memfd and not
+# this file; the repository root is then the directory it was started from.
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ "$REPO" == /proc/* ]]; then
+  REPO="$PWD"
+fi
 WORK="$REPO/work"
 NR_DEPLOY_PYTHON="${NR_PYTHON:-python3}"
 GAME=""
@@ -90,11 +95,11 @@ if [[ $SKIP_BUILD -eq 1 ]]; then
   echo "[skip] build (--skip-build)"
 else
   echo "[2/3] building the layer ..."
-  ( cd "$REPO" && make )
+  make -C "$REPO"
   if [[ -n "$RELEASE" ]]; then
     # The release's CPU floor, whatever NR_IMAGE_ARCH this shell carries. It is also the
     # default, and make rebuilds the library whenever its flags change.
-    ( cd "$REPO" && make work/libnr_image.so NR_IMAGE_ARCH=-march=x86-64-v3 )
+    make -C "$REPO" work/libnr_image.so NR_IMAGE_ARCH=-march=x86-64-v3
   fi
 fi
 [[ -f "$WORK/libnr_layer.so" ]] || { echo "ERROR: $WORK/libnr_layer.so missing; build it first" >&2; exit 3; }

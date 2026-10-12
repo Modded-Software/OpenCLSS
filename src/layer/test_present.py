@@ -213,10 +213,17 @@ def run(mode, attempt=1, attempts=1, pipelined=False):
             if tuple(seen[present_index]) != want:
                 wrong.append((present_index, tuple(seen[present_index]), want))
         last[image] = present_index
-    check(f"{label}: what the layer wrote is in the image next time round",
-          untouched > 0 and not wrong,
-          f"{untouched - len(wrong)} of {untouched} untouched frames hold the answer to request "
-          f"{'n-1' if pipelined else 'n'}" + (f"; first wrong {wrong[0]}" if wrong else ""))
+    if untouched == 0 and len({image for _, image, _ in order}) < 2:
+        # A headless surface with more than one swapchain image can still hand back the
+        # same index every time; nothing is presented twice, so there is no second round
+        # to check. A skip is not a pass, and the pixels above were still checked.
+        print(f"  [skip] {label}: the swapchain returned one image only, so no frame comes "
+              "round again - a skip is not a pass", flush=True)
+    else:
+        check(f"{label}: what the layer wrote is in the image next time round",
+              untouched > 0 and not wrong,
+              f"{untouched - len(wrong)} of {untouched} untouched frames hold the answer to request "
+              f"{'n-1' if pipelined else 'n'}" + (f"; first wrong {wrong[0]}" if wrong else ""))
     if pipelined:
         check(f"{label}: the layer says it is pipelined", "[nr_layer] async:" in got.stderr,
               "its own announcement, not the environment it was given")
@@ -266,7 +273,17 @@ def main():
     if not BINARY.exists():
         print("present: skipped (make work/test_present first) - a skip is not a pass")
         return 0
-    if not (LAYER / "VkLayer_dlss_nr.json").exists():
+    # The manifest embeds the layer's absolute path, so a check-out that moved (a rename,
+    # a fresh clone) leaves one pointing at a library that is no longer there. Regenerate
+    # when it is missing *or* stale, not only when it is absent.
+    stale = not (LAYER / "VkLayer_dlss_nr.json").exists()
+    if not stale:
+        try:
+            library = json.loads((LAYER / "VkLayer_dlss_nr.json").read_text())["layer"]["library_path"]
+            stale = not pathlib.Path(library).exists()
+        except (ValueError, KeyError, OSError):
+            stale = True
+    if stale:
         subprocess.run([sys.executable, str(ROOT / "src" / "layer" / "prepare_layer.py"),
                         str(LAYER)], check=True, capture_output=True)
     probe = subprocess.run([str(BINARY), "1"], capture_output=True, text=True,

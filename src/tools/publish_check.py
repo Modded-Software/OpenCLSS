@@ -39,6 +39,12 @@ DELIBERATE = {
     # notes/ptx-kernel-configs.md and notes/MODEL-SPEC.txt rest on. Owner's call, and
     # the reasoning is in notes/phase58-before-publishing.md.
     "notes/ptx-demangled.txt",
+    # The frame transcribed from the recovered graph, one dispatch per block, so it is long
+    # by construction - not a blob, and every line is ours.
+    "src/ref/nr_frame.c",
+    # The working hand-off log the tree's CLAUDE.md points at: the current state and the
+    # traps, in prose. Large because it is the record, and text throughout.
+    "notes/HANDOFF.md",
 }
 # Before/after comparison frames, on the orphan `media` branch so the code history stays
 # text only. Each one is chosen by the owner, not by whoever builds the image - they are

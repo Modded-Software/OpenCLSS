@@ -333,19 +333,23 @@ def main():
         small_head = rng.normal(0, 1, (height * 3 // 5, width * 3 // 5, 4)).astype(np.float32)
         request = rng.integers(0, 256, (height + 6, width + 10, 4), dtype=np.uint8)
         hold, levels = 0.6, 16.0
-        cases = [("still", {}, {}),
-                 ("still, intensity 1.66", {"intensity": 1.66}, {"intensity": 1.66}),
-                 ("history", {"history": history}, {"history": history}),
+        # A still frame shares the arithmetic with NumPy and must agree to the last bit; a
+        # history frame runs the learned gate's exponential and floor, the same place the
+        # temporal checks allow a named tolerance (one fp32 ulp in practice). The encoded
+        # bytes are compared exactly either way.
+        cases = [("still", {}, {}, None),
+                 ("still, intensity 1.66", {"intensity": 1.66}, {"intensity": 1.66}, None),
+                 ("history", {"history": history}, {"history": history}, 2e-6),
                  ("history, floor and release",
                   {"history": history, "previous": previous, "hold": hold,
                    "slope": float(np.float32(-255.0 * hold / nr_frame.HOLD_RAMP)),
                    "release": nr_frame.release_slope(levels)},
                   {"history": history, "history_previous": previous, "history_hold": hold,
-                   "history_release": levels}),
+                   "history_release": levels}, 2e-6),
                  ("history, control mask, confidence 0.5",
                   {"history": history, "control_mask": mask, "history_confidence": 0.5},
-                  {"history": history, "control_mask": mask, "history_confidence": 0.5})]
-        for name, c_args, py_args in cases:
+                  {"history": history, "control_mask": mask, "history_confidence": 0.5}, 2e-6)]
+        for name, c_args, py_args, tol in cases:
             c_enc, py_enc = request.copy(), request.copy()
             c_args = dict(c_args)
             c_hist, c_prev, c_mask = (c_args.pop(k, None) for k in ("history", "previous", "control_mask"))
@@ -353,8 +357,17 @@ def main():
                                           history=c_hist, previous=c_prev, control_mask=c_mask, **c_args)
             py_out = nr_frame.compose_encode(small_head, colour, py_enc, top=3, left=5, bgra=True,
                                              **py_args)
-            check(f"compose_encode, {name}: composition and bytes bit-identical",
-                  py_out is not None and np.array_equal(c_out, py_out) and np.array_equal(c_enc, py_enc))
+            label = "bit-identical" if tol is None else f"within {tol:g}"
+            if py_out is None:
+                check(f"compose_encode, {name}: composition and bytes {label}", False,
+                      "composition is None")
+                continue
+            diff = float(np.abs(c_out - py_out).max())
+            comp = np.array_equal(c_out, py_out) if tol is None else diff <= tol
+            bytes_ok = np.array_equal(c_enc, py_enc)
+            detail = "" if comp and bytes_ok else (
+                f"composition max |d| {diff:.3e}, bytes differ {int((c_enc != py_enc).sum())}")
+            check(f"compose_encode, {name}: composition and bytes {label}", comp and bytes_ok, detail)
         # where the detail split is not a no-op, the separate passes, the same bytes
         c_enc = request.copy()
         c_out = native.compose_encode(small_head, colour, c_enc, top=3, left=5, bgra=True,

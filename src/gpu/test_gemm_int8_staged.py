@@ -13,6 +13,16 @@ import xmxres as X
 
 def main():
     rt = X.Runtime()
+    # The kernel is written for Xe2's integer tile (N=16); Xe-HPG exposes N=8 and needs an
+    # `_n8` twin the integer path does not have yet, so the shapes below cannot run there.
+    if rt.lib.xmx_open() != 0 or rt.lib.xmx_coopmat() != 1:
+        print("integer staged GEMM: skipped (needs VK_KHR_cooperative_matrix) - a skip is not a pass")
+        return 0
+    if rt.lib.xmx_coopmat_int8_n() != 16:
+        print(f"integer staged GEMM: skipped (this device's integer tile is "
+              f"N={rt.lib.xmx_coopmat_int8_n()}; the kernel is written for Xe2's N=16 and Xe-HPG's "
+              "N=8 twin does not exist yet) - a skip is not a pass")
+        return 0
     rng = np.random.default_rng(8)
     cases = 0
     for rows, cols, inner in ((64, 1024, 1024), (64, 32, 64), (100, 96, 128),

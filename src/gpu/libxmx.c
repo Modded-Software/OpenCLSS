@@ -183,6 +183,7 @@ static struct {
 	 * The `_n8` kernel variants carry the N=8 shape and the host dispatches N over this
 	 * N, so one build serves both. Set from the property table at open; 16/8 until then. */
 	int coopmat_m, coopmat_n;
+	int coopmat_int8_n;       /* the sint8->sint32 tile's N: 16 on Xe2, 8 on Xe-HPG */
 	/* `explicit_layout`: VK_KHR_workgroup_memory_explicit_layout is enabled on the device,
 	 * which `gemm_staged.comp` needs since its operand tiles and output stage alias one
 	 * shared-memory block. `staged_ok`: that kernel is built and may be chosen - matrix
@@ -1161,6 +1162,7 @@ static void detect_coopmat_shape(VkPhysicalDevice pd)
 {
 	g.coopmat_m = 8;
 	g.coopmat_n = 16;
+	g.coopmat_int8_n = 16;
 	if (!vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR) return;
 	uint32_t count = 0;
 	if (vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR(pd, &count, NULL) != VK_SUCCESS || !count)
@@ -1179,8 +1181,15 @@ static void detect_coopmat_shape(VkPhysicalDevice pd)
 			    && props[i].scope == VK_SCOPE_SUBGROUP_KHR) {
 				g.coopmat_m = (int)props[i].MSize;
 				g.coopmat_n = (int)props[i].NSize;
-				break;
 			}
+			/* The integer path is config 4, sint8 x sint8 -> sint32; its N follows the
+			 * same 16-vs-8 split as the float one. */
+			if (props[i].AType == VK_COMPONENT_TYPE_SINT8_KHR
+			    && props[i].BType == VK_COMPONENT_TYPE_SINT8_KHR
+			    && props[i].CType == VK_COMPONENT_TYPE_SINT32_KHR
+			    && props[i].ResultType == VK_COMPONENT_TYPE_SINT32_KHR
+			    && props[i].scope == VK_SCOPE_SUBGROUP_KHR)
+				g.coopmat_int8_n = (int)props[i].NSize;
 		}
 	}
 	free(props);
@@ -1509,6 +1518,10 @@ int xmx_portable(void) { return g.dev ? g.portable : -1; }
  * or 0 before the device is open. The host uses it to name the matching kernel variant
  * (`gemm_coopmat.spv` / `gemm_coopmat_n8.spv`) and libxmx uses it to dispatch. */
 int xmx_coopmat_n(void) { return g.dev ? g.coopmat_n : 0; }
+/* The N of the device's integer (sint8->sint32) cooperative-matrix tile, or 0 before the
+ * device is open. The kernel is written for Xe2's N=16; a device whose tile is N=8 (Xe-HPG)
+ * needs its `_n8` twin, which the integer path does not have yet. */
+int xmx_coopmat_int8_n(void) { return g.dev ? g.coopmat_int8_n : 0; }
 /* Whether a GEMM may gather its A from the image in window order (0x400000): the staged
  * kernel does it on the matrix path, the tiled portable kernel on the other. A device with
  * matrix units but no VK_KHR_workgroup_memory_explicit_layout - a host that lent its device

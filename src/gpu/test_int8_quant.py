@@ -26,14 +26,14 @@ RUNNER = nr_build.executable("gemm_runner")
 SPV = nr_build.shader("gemm_coopmat_int8.spv")
 
 
-def has_matrix_units():
-    """Configuration 4 is a cooperative-matrix kernel: a device without
-    VK_KHR_cooperative_matrix (MoltenVK, the phones) cannot build it at all."""
+def integer_tile_n():
+    """The device's integer cooperative-matrix tile N, or None when there is none: a device
+    without VK_KHR_cooperative_matrix (MoltenVK, the phones) cannot build the kernel at all."""
     import ctypes
     lib = ctypes.CDLL(str(nr_build.library("xmx")))
-    if lib.xmx_open() != 0:
-        return False
-    return lib.xmx_coopmat() == 1
+    if lib.xmx_open() != 0 or lib.xmx_coopmat() != 1:
+        return None
+    return int(lib.xmx_coopmat_int8_n())
 FAILURES = []
 
 
@@ -68,9 +68,14 @@ def relative(got, want):
 
 
 def main():
-    if nr_build.backend() != "vulkan" or not has_matrix_units():
+    tile_n = integer_tile_n()
+    if nr_build.backend() != "vulkan" or tile_n is None:
         print("int8 quantisation: skipped (the integer kernel needs VK_KHR_cooperative_matrix, which this "
               "device or runtime does not have) - a skip is not a pass")
+        return 0
+    if tile_n != 16:
+        print(f"int8 quantisation: skipped (this device's integer tile is N={tile_n}; the kernel is "
+              "written for Xe2's N=16 and Xe-HPG's N=8 twin does not exist yet) - a skip is not a pass")
         return 0
     if not RUNNER.exists() or not SPV.exists():
         print("int8 quant: skipped (make first) - a skip is not a pass")

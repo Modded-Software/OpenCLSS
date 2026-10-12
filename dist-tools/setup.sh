@@ -22,7 +22,13 @@
 # ============================================================================
 set -euo pipefail
 
+# A launcher can run this through /proc/self/fd, where BASH_SOURCE names a memfd and not
+# this file. The usage above already requires running from inside the release folder, so
+# read the working directory then.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "$HERE" == /proc/self/fd* ]]; then
+  HERE="$PWD"
+fi
 GAME=""
 DLL=""
 NAME="libnr_layer.so"

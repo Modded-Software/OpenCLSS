@@ -64,7 +64,8 @@ class ReleaseTests(unittest.TestCase):
     def cli(self, script, *args, environment=None):
         command = ([sys.executable] if script.endswith(".py") else ["bash"]) + [str(self.root / script)]
         result = subprocess.run(command + list(map(str, args)), capture_output=True, text=True,
-                                timeout=30, env={**os.environ, **(environment or {})})
+                                timeout=30, cwd=self.root,
+                                env={**os.environ, **(environment or {})})
         if result.returncode != 0:
             sys.stderr.write(f"release command exited {result.returncode}: {result.stderr.strip()}\n")
         return result
@@ -227,7 +228,8 @@ class ReleaseTests(unittest.TestCase):
         game = self.base / "game (empty)"
         game.mkdir()
         got = subprocess.run([str(self.target / "setup.sh"), "--game", str(game),
-                              "--skip-weights"], capture_output=True, text=True, timeout=30)
+                              "--skip-weights"], capture_output=True, text=True, timeout=30,
+                             cwd=self.target)
         self.assertEqual(got.returncode, 3, got.stdout + got.stderr)
         self.assertFalse((game / "dlss-nr").exists())
 
@@ -241,7 +243,7 @@ class ReleaseTests(unittest.TestCase):
         game.mkdir()
         got = subprocess.run([str(self.target / "setup.sh"), "--game", str(game),
                               "--skip-weights", "--dry-run"],
-                             capture_output=True, text=True, timeout=30)
+                             capture_output=True, text=True, timeout=30, cwd=self.target)
         self.assertEqual(got.returncode, 0, got.stdout + got.stderr)
         self.assertEqual(list(game.iterdir()), [])
 
@@ -265,8 +267,9 @@ class ReleaseTests(unittest.TestCase):
         report = self.base / "interpreter.json"
         got = subprocess.run([str(self.target / "setup.sh"), "--game", str(game),
                               "--dll", str(dll), "--dry-run"], capture_output=True,
-                             text=True, timeout=30, env={**os.environ, "NR_PYTHON": str(interpreter),
-                                                        "NR_TEST_PYTHON_REPORT": str(report)})
+                             text=True, timeout=30, cwd=self.target,
+                             env={**os.environ, "NR_PYTHON": str(interpreter),
+                                  "NR_TEST_PYTHON_REPORT": str(report)})
         self.assertEqual(got.returncode, 0, got.stdout + got.stderr)
         arguments = json.loads(report.read_text())
         self.assertEqual(arguments[0], str(interpreter))
@@ -284,7 +287,7 @@ class ReleaseTests(unittest.TestCase):
         game.mkdir()
         got = subprocess.run([str(self.target / "setup.sh"), "--game", str(game),
                               "--name", "test_layer.so", "--skip-weights"],
-                             capture_output=True, text=True, timeout=30)
+                             capture_output=True, text=True, timeout=30, cwd=self.target)
         self.assertEqual(got.returncode, 0, got.stdout + got.stderr)
         installed = game / "dlss-nr"
         manifest = json.loads((installed / "VkLayer_dlss_nr.json").read_text())
