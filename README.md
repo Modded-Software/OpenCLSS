@@ -54,16 +54,16 @@ CMake builds the same targets on Linux, macOS, Windows and Android:
 
 ```sh
 mkdir -p work/mlxw
-python3 work/mlx-dlss/python/mlxdlss/tools/extract_dlssnr_weights.py \
+uv run python work/mlx-dlss/python/mlxdlss/tools/extract_dlssnr_weights.py \
         /path/to/nvngx_dlssnr.dll work/mlxw/dlssnr-packed.safetensors
-python3 work/mlx-dlss/python/mlxdlss/tools/unpack_dlssnr_weights.py \
+uv run python work/mlx-dlss/python/mlxdlss/tools/unpack_dlssnr_weights.py \
         work/mlxw/dlssnr-packed.safetensors work/mlxw/dlssnr-logical.safetensors
 ```
 
 ### Run it in a game
 
 ```sh
-python3 src/layer/nr_daemon.py --settings /tmp/nr_settings.json
+uv run python src/layer/nr_daemon.py --settings /tmp/nr_settings.json
 NR_LIVE=1 src/layer/nr-photo --steam <appid>   # prints the Steam launch option
 ```
 
