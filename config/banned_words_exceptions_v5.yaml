@@ -1,0 +1,1759 @@
+exceptions:
+  - rule: bgetattr
+    path: ^src/bench/block0_probe\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/bench/daemon_stages\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/bench/dtype_traffic\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/bench/ffn_batch\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/bench/frame_profile\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/bench/int8_bottleneck\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/bench/opencl_gemm\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/bench/split_cost\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/bench/xmx_throughput\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/gpu/nr_frame_resident\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/gpu/nr_resident\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/gpu/test_gemm_qkv\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/gpu/test_window_attention\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/gpu/xmx\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/gpu/xmxres\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/layer/nr_daemon\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/layer/nr_paths\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/nr_build\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/ref/nr_frame_native\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/ref/test_against_torch\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/ref/test_nr_frame_c\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/tools/test_windows_wizard\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/tools/windows_launch\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bgetattr
+    path: ^src/tools/windows_wizard_core\.py$
+    rationale: getattr is called with a literal, fixed attribute name, not dynamic reflection.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the access becomes a direct attribute reference.
+  - rule: bmock-b
+    path: ^src/layer/test_daemon\.py$
+    rationale: The word names a test double built from a real object, not a mocking framework.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the helper is renamed.
+  - rule: bmock-b
+    path: ^src/tools/test_release\.py$
+    rationale: The word names a test double built from a real object, not a mocking framework.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the helper is renamed.
+  - rule: bmock-b
+    path: ^src/tools/test_windows_controls\.py$
+    rationale: The word names a test double built from a real object, not a mocking framework.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the helper is renamed.
+  - rule: bmock-b
+    path: ^src/tools/test_windows_launch\.py$
+    rationale: The word names a test double built from a real object, not a mocking framework.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the helper is renamed.
+  - rule: bmock-b
+    path: ^src/tools/test_windows_wizard_bridge\.py$
+    rationale: The word names a test double built from a real object, not a mocking framework.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the helper is renamed.
+  - rule: bmock-b
+    path: ^src/tools/test_windows_wizard\.py$
+    rationale: The word names a test double built from a real object, not a mocking framework.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the helper is renamed.
+  - rule: parents
+    path: ^scripts/build_release\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^scripts/fetch_dxvk\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^scripts/get_weights\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/bank_probe\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/bf16_check\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/block0_probe\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/block_peak\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/capture_compare\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/census_ew\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/census\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/compare\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/control_atlas\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/daemon_stages\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/denorm_mode\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/dtype_traffic\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/energy\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/epilogue_cost\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/ew_rate\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/extent_curve\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/ffn_batch\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/flicker\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/frame_profile\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/frame_rates\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/frame_replay\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/frame_stages\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/frame_time\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/fusion_gain\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/gemm_epilogues\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/gemm_sustained\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/half_probe\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/int8_bottleneck\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/int_activations\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/int_render\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/int_weights\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/iteration\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/live_rates\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/occupancy\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/opendlss_reference\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/opendlss_steps\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/overhead\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/qkv_fusion\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/replay\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/restill\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/scale_spectrum\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/scratch_memory\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/softmax_pack\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/specialization\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/split_cost\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/tiled_ab\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/upstream\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/bench/xmx_throughput\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/nr_xmx\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_attention_gpu\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_compact_head\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_denorm\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_epilogue\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_frame_execution\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_gemm_contract\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_gemm_int8\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_gemm\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_global_attention\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_input_fp16\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_int8_quant\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_joint_qkv\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_layer\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_portable\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_qkv_fusion\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_scratch_arena\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_softmax_pack\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_specialization\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/test_staged_packed\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/xmx\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/gpu/xmxres\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/layer/nr_alloc\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/layer/nr_paths\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/layer/prepare_layer\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/layer/test_daemon\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/layer/test_launcher\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/layer/test_panel\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/layer/test_present\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/layer/test_temporal\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/layer/test_toggle\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/layer/test_ui_mask\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/nr_build\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/ref/forward\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/ref/hnet_model\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/ref/hnet_ref\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/ref/nr_frame_native\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/ref/nr_image\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/ref/nr_model\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/ref/run_frame\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/ref/test_native_image\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/ref/test_nr_frame_c\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/ref/test_nr_frame_live\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/ref/test_nr_model\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/ref/test_temporal_controls\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/tools/build_check\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/tools/claims_check\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/tools/comparisons\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/tools/knob_doc\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/tools/opendlss_model\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/tools/publish_check\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/tools/test_release\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/tools/test_windows_controls\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/tools/windows_wizard_core\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/tools/windows_wizard\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: protected-bare-system-interpreter
+    path: ^ci-profile\.yaml$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^CMakeLists\.txt$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^dist-tools/setup\.bat$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^dist-tools/setup\.sh$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^dist-tools/windows-wizard\.ps1$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^docs/RELEASE-QUICKSTART\.md$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^docs/WINDOWS\.md$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^Makefile$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^notes/CLAUDE\.md$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^notes/HANDOFF\.md$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^README\.md$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^scripts/fetch_dxvk\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^scripts/get_weights\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^scripts/iterate\.sh$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/bench/block0_probe\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/bench/capture_compare\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/bench/daemon_stages\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/bench/denorm_mode\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/bench/flicker\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/bench/frame_profile\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/bench/frame_rates\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/bench/gemm_epilogues\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/bench/gemm_sustained\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/bench/int8_bottleneck\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/bench/iteration\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/bench/live_rates\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/bench/opendlss_reference\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/bench/restill\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/bench/scale_spectrum\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/gpu/test_resident\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/layer/nr_daemon\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/layer/nr-photo$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/layer/test_alloc\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/layer/test_pipe\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/layer/test_spawn_exit\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/layer/test_vulkan_proxy\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/layer/vulkan_proxy_gen\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/ref/nr_frame\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/ref/nr_temporal\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/ref/test_against_torch\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/ref/test_nr_model\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/tools/claims_check\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/tools/comparisons\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/tools/contact_sheet\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/tools/knob_doc\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/tools/opendlss_model\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/tools/publish_check\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^src/tools/test_release\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: protected-bare-system-interpreter
+    path: ^tools/deploy\.bat$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: s-noqa
+    path: ^scripts/get_weights\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/bench/bank_probe\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/bench/block_peak\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/bench/control_atlas\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/bench/daemon_stages\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/bench/flicker\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/bench/gemm_epilogues\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/bench/half_probe\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/bench/int8_bottleneck\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/bench/int_render\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/bench/opendlss_blocks\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/bench/opendlss_reference\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/bench/opendlss_steps\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/bench/softmax_pack\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/bench/upstream\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/bench/xmx_throughput\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/gpu/nr_frame_resident\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/gpu/nr_resident\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/gpu/nr_xmx\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/gpu/test_denorm\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/gpu/test_gemm_contract\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/gpu/test_gemm_int8\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/gpu/test_gemm\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/gpu/test_global_attention\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/gpu/test_int8_quant\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/gpu/test_layer\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/gpu/test_portable\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/gpu/test_resident\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/gpu/test_softmax_pack\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/gpu/test_staged_packed\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/gpu/xmx\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/gpu/xmxres\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/layer/nr_daemon\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/layer/nr-panel$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/layer/nr_paths\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/layer/prepare_layer\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/layer/test_alloc\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/layer/test_daemon\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/layer/test_pipe\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/layer/test_present\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/layer/test_temporal\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/ref/nr_frame_native\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/ref/nr_frame\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/ref/nr_image\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/ref/nr_temporal\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/ref/test_against_torch\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/ref/test_native_image\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/ref/test_nr_frame_c\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/ref/test_nr_frame_live\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/ref/test_nr_model\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/ref/test_temporal_controls\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/tools/knob_doc\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/tools/test_windows_controls\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: parents
+    path: ^src/layer/nr_ctl\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: protected-bare-system-interpreter
+    path: ^src/layer/nr_ctl\.py$
+    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the reference is rewritten to the hermetic uv run python form.
+  - rule: s-noqa
+    path: ^src/layer/nr_ctl\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: s-noqa
+    path: ^src/layer/nr_toggle\.py$
+    rationale: The directive silences a foreign linter that is not part of this repository toolchain; the line is reviewed and kept.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the foreign linter is dropped or the line needs no suppression.
+  - rule: parents
+    path: ^src/gpu/test_resident\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/layer/nr_daemon\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/layer/test_alloc\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/layer/test_pipe\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/layer/test_vulkan_proxy\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/ref/nr_frame\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/ref/nr_temporal\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/ref/test_against_torch\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/tools/test_windows_launch\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: parents
+    path: ^src/tools/test_windows_wizard\.py$
+    rationale: The file locates the repository root from its own location; the relative offset is fixed and no external input reaches it.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the repository root is supplied by one shared accessor.
+  - rule: bunlock-b
+    path: ^src/gpu/libxmx\.c$
+    rationale: The token is the host lock callback pair (lock/unlock) supplied to the adopt API and its documentation, not the prose metaphor the rule targets.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the callback pair is renamed away from the host lock API.
+  - rule: bunlocks-b
+    path: ^src/gpu/libxmx\.c$
+    rationale: The token is the host lock callback pair (lock/unlock) supplied to the adopt API and its documentation, not the prose metaphor the rule targets.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the callback pair is renamed away from the host lock API.
+  - rule: bunlock-b
+    path: ^src/gpu/libd3dmx\.c$
+    rationale: The token is the host lock callback pair (lock/unlock) supplied to the adopt API and its documentation, not the prose metaphor the rule targets.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the callback pair is renamed away from the host lock API.
+  - rule: bunlocks-b
+    path: ^src/gpu/libd3dmx\.c$
+    rationale: The token is the host lock callback pair (lock/unlock) supplied to the adopt API and its documentation, not the prose metaphor the rule targets.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the callback pair is renamed away from the host lock API.
+  - rule: bunlock-b
+    path: ^src/gpu/libmetalmx\.m$
+    rationale: The token is the host lock callback pair (lock/unlock) supplied to the adopt API and its documentation, not the prose metaphor the rule targets.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the callback pair is renamed away from the host lock API.
+  - rule: bunlocks-b
+    path: ^src/gpu/libmetalmx\.m$
+    rationale: The token is the host lock callback pair (lock/unlock) supplied to the adopt API and its documentation, not the prose metaphor the rule targets.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the callback pair is renamed away from the host lock API.
+  - rule: bunlock-b
+    path: ^src/gpu/xmx\.h$
+    rationale: The token is the host lock callback pair (lock/unlock) supplied to the adopt API and its documentation, not the prose metaphor the rule targets.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the callback pair is renamed away from the host lock API.
+  - rule: bunlocks-b
+    path: ^src/gpu/xmx\.h$
+    rationale: The token is the host lock callback pair (lock/unlock) supplied to the adopt API and its documentation, not the prose metaphor the rule targets.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the callback pair is renamed away from the host lock API.
+  - rule: bunlock-b
+    path: ^src/ref/nr_frame\.h$
+    rationale: The token is the host lock callback pair (lock/unlock) supplied to the adopt API and its documentation, not the prose metaphor the rule targets.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the callback pair is renamed away from the host lock API.
+  - rule: bunlocks-b
+    path: ^src/ref/nr_frame\.h$
+    rationale: The token is the host lock callback pair (lock/unlock) supplied to the adopt API and its documentation, not the prose metaphor the rule targets.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the callback pair is renamed away from the host lock API.
+  - rule: bunlock-b
+    path: ^src/ref/nr_frame\.c$
+    rationale: The token is the host lock callback pair (lock/unlock) supplied to the adopt API and its documentation, not the prose metaphor the rule targets.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the callback pair is renamed away from the host lock API.
+  - rule: bunlocks-b
+    path: ^src/ref/nr_frame\.c$
+    rationale: The token is the host lock callback pair (lock/unlock) supplied to the adopt API and its documentation, not the prose metaphor the rule targets.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the callback pair is renamed away from the host lock API.
+  - rule: bhasattr
+    path: ^src/ref/nr_frame_native\.py$
+    rationale: The call sets or probes an attribute on a ctypes foreign library handle or foreign struct at the FFI boundary, where the documented ctypes mechanism is the only way to reach the native symbol or field.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the interface moves off ctypes.
+  - rule: bsetattr
+    path: ^src/ref/nr_frame_native\.py$
+    rationale: The call sets or probes an attribute on a ctypes foreign library handle or foreign struct at the FFI boundary, where the documented ctypes mechanism is the only way to reach the native symbol or field.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the interface moves off ctypes.
+  - rule: bhasattr
+    path: ^src/ref/test_nr_frame_c\.py$
+    rationale: The call sets or probes an attribute on a ctypes foreign library handle or foreign struct at the FFI boundary, where the documented ctypes mechanism is the only way to reach the native symbol or field.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the interface moves off ctypes.
+  - rule: bhasattr
+    path: ^src/ref/test_against_torch\.py$
+    rationale: The call probes an optional attribute of a third-party or platform API as a capability check; the name is a fixed literal and the probe is the documented form.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the dependency version makes the probe unconditional.
+  - rule: bhasattr
+    path: ^src/tools/windows_wizard_core\.py$
+    rationale: The call probes an optional attribute of a third-party or platform API as a capability check; the name is a fixed literal and the probe is the documented form.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the dependency version makes the probe unconditional.
+  - rule: bsetattr
+    path: ^src/bench/frame_profile\.py$
+    rationale: The call sets or probes an attribute on a ctypes foreign library handle or foreign struct at the FFI boundary, where the documented ctypes mechanism is the only way to reach the native symbol or field.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the interface moves off ctypes.
+  - rule: bhasattr
+    path: ^src/gpu/nr_frame_resident\.py$
+    rationale: The attribute name is drawn only from a fixed, in-file literal whitelist, never from external input, and explicit assignment cannot express the loop.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the switches move to a dict-backed store.
+  - rule: bsetattr
+    path: ^src/layer/nr_daemon\.py$
+    rationale: The attribute name is drawn only from a fixed, in-file literal whitelist, never from external input, and explicit assignment cannot express the loop.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the switches move to a dict-backed store.
+  - rule: bsetattr
+    path: ^src/gpu/test_window_attention\.py$
+    rationale: The attribute name is drawn only from a fixed, in-file literal whitelist, never from external input, and explicit assignment cannot express the loop.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the switches move to a dict-backed store.
+  - rule: bsetattr
+    path: ^src/gpu/test_gemm_qkv\.py$
+    rationale: The attribute name is drawn only from a fixed, in-file literal whitelist, never from external input, and explicit assignment cannot express the loop.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the switches move to a dict-backed store.
+  - rule: bsetattr
+    path: ^src/gpu/test_ffn_batch\.py$
+    rationale: The attribute name is drawn only from a fixed, in-file literal whitelist, never from external input, and explicit assignment cannot express the loop.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the switches move to a dict-backed store.
+  - rule: bsetattr
+    path: ^src/bench/split_cost\.py$
+    rationale: The attribute name is drawn only from a fixed, in-file literal whitelist, never from external input, and explicit assignment cannot express the loop.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the switches move to a dict-backed store.
+  - rule: bsetattr
+    path: ^src/bench/ffn_batch\.py$
+    rationale: The attribute name is drawn only from a fixed, in-file literal whitelist, never from external input, and explicit assignment cannot express the loop.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the switches move to a dict-backed store.
+  - rule: bsetattr
+    path: ^src/bench/dtype_traffic\.py$
+    rationale: The attribute name is drawn only from a fixed, in-file literal whitelist, never from external input, and explicit assignment cannot express the loop.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the switches move to a dict-backed store.
+  - rule: bsetattr
+    path: ^src/bench/daemon_stages\.py$
+    rationale: The attribute name is drawn only from a fixed, in-file literal whitelist, never from external input, and explicit assignment cannot express the loop.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the switches move to a dict-backed store.
+  - rule: bsetattr
+    path: ^src/bench/block0_probe\.py$
+    rationale: The attribute name is drawn only from a fixed, in-file literal whitelist, never from external input, and explicit assignment cannot express the loop.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the switches move to a dict-backed store.
+  - rule: bsilent
+    path: ^src/tools/windows_launch\.py$
+    rationale: The token is the literal -silent command-line flag of a third-party program (Steam), not a description of this code behaviour.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the flag is dropped from the launch command.
+  - rule: bunpack-b
+    path: ^src/layer/nr_daemon\.py$
+    rationale: The token is the Python standard-library struct.unpack() call, whose name is fixed by the standard library, not this project prose.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the decode no longer calls struct.unpack().
+  - rule: bunpack-b
+    path: ^src/layer/test_present\.py$
+    rationale: The token is the Python standard-library struct.unpack() call, whose name is fixed by the standard library, not this project prose.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the decode no longer calls struct.unpack().
+  - rule: bunpack-b
+    path: ^src/layer/test_daemon\.py$
+    rationale: The token is the Python standard-library struct.unpack() call, whose name is fixed by the standard library, not this project prose.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the decode no longer calls struct.unpack().
+  - rule: bunpack-b
+    path: ^src/ref/nr_model\.py$
+    rationale: The token is the Python standard-library struct.unpack() call, whose name is fixed by the standard library, not this project prose.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the decode no longer calls struct.unpack().
+  - rule: bunpack-b
+    path: ^src/bench/denorm_mode\.py$
+    rationale: The token is the Python standard-library struct.unpack() call, whose name is fixed by the standard library, not this project prose.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the decode no longer calls struct.unpack().
+  - rule: bunpack-b
+    path: ^src/ref/test_nr_frame_c\.py$
+    rationale: The token is the Python standard-library struct.unpack() call, whose name is fixed by the standard library, not this project prose.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the decode no longer calls struct.unpack().
+  - rule: bunpack-b
+    path: ^src/tools/pe_inspect\.py$
+    rationale: The token is the Python standard-library struct.unpack() call, whose name is fixed by the standard library, not this project prose.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the decode no longer calls struct.unpack().
+  - rule: dataclass
+    path: ^src/ref/nr_display\.py$
+    rationale: The class is a standard-library dataclass (some frozen or __post_init__-validated) in a project that ships no third-party Python dependency and no lockfile; a Pydantic model would add a Rust-backed dependency the tree deliberately avoids.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the project adopts a third-party model library.
+  - rule: dataclass
+    path: ^src/tools/windows_launch\.py$
+    rationale: The class is a standard-library dataclass (some frozen or __post_init__-validated) in a project that ships no third-party Python dependency and no lockfile; a Pydantic model would add a Rust-backed dependency the tree deliberately avoids.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the project adopts a third-party model library.
+  - rule: dataclass
+    path: ^src/tools/windows_wizard_core\.py$
+    rationale: The class is a standard-library dataclass (some frozen or __post_init__-validated) in a project that ships no third-party Python dependency and no lockfile; a Pydantic model would add a Rust-backed dependency the tree deliberately avoids.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the project adopts a third-party model library.
+  - rule: bscalable-b
+    path: ^src/ref/nr_portable\.h$
+    rationale: The token is LLVM own name for a vector-length-agnostic (scalable) half vector and the verbatim message its backend prints; renaming it would misquote the compiler.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the text is rewritten without the compiler quote.
+  - rule: home
+    path: ^src/tools/publish_check\.py$
+    rationale: The literal is the regex this tool uses to detect a hardcoded home path - the rule own detector, not a path this project uses.
+    owner: workspace-agent
+    review_date: '2027-10-12'
+    removal: Remove when the detector no longer spells the prefix literally.

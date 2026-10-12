@@ -1,0 +1,21 @@
+# Reviewed secret-scan allowlist. The secrets wrapper (lib/checks_secrets.sh) reads this
+# file at the repository root and extends it, so it is the sanctioned place to record
+# gitleaks false positives; the separate ignore file is not read by the wrapper and is forbidden.
+#
+# Every entry here is a false positive of the generic-api-key rule, scoped by the exact
+# line shape so it cannot hide a real key elsewhere:
+#   - the DLL's Authenticode SHA-256/SHA-1 digests in notes/dlssnr-pe-map.txt (hashes, not
+#     credentials);
+#   - the environment variable name NR_QKV_EPILOGUE in notes/improve-qkv-epilogue.md,
+#     which looks like KEY=VALUE to the rule.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "DLL Authenticode digests and an env-var name in research notes, not credentials"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = [
+  '''authenticode sha(?:1|256)\s*:\s*[0-9a-f]{40,64}''',
+  '''NR_QKV_EPILOGUE=0''',
+]

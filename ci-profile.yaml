@@ -1,0 +1,39 @@
+version: 1
+project: dlss-on-arc
+# Same strict hook set as the xbox-on-deb consumer. The tree is C/C++/GLSL plus the
+# Python benchmarks and shell entry points, so the languages are the ones scaffold-ci
+# knows that overlap: python and shell. Hooks whose applicable_to does not intersect
+# are dropped by scaffold-ci.
+tier: strict
+languages: [shell, python]
+hooks:
+  pre-commit:
+    - gitleaks
+    - block-sensitive-files
+    - check-trusted-exec
+    - check-unstaged
+    - ci-check-error-swallow
+    - check-coverage-no-devolution
+    - check-portable-shell
+    - check-file-length
+    - check-required-hooks-present
+    - ci-lint
+    - ci-type-check
+    - check-dependency-versions
+    - check-module-size
+    - check-policy-integrity
+    - check-banned-words
+    - check-init-files
+    - check-py-not-executable
+    - check-markdown-docs
+    - check-resolution-shapes
+    - check-inline-code
+    - check-boot-venv-layout
+  commit-msg:
+    - check-commit-message
+    - block-coauthored
+  pre-push:
+    - block-coauthored-history
+    - ci-check-push
+    - check-dead-code
+    - osv-scan

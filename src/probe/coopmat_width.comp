@@ -1,0 +1,122 @@
+#version 450
+/*
+ * coopmat_width - what a 256-lane workgroup that uses cooperative matrices actually runs
+ * as on this device, and whether the fused kernels' shared-memory fragment traffic is
+ * exact. Driven by coopmat_width.c, which pins the subgroup at 32 as libxmx does.
+ *
+ *   ids  : per lane gl_SubgroupSize, gl_SubgroupID, gl_SubgroupInvocationID, gl_NumSubgroups
+ *   qk   : each subgroup s computes rows 8s..8s+7 of Q * K^T (Q 64x32, K 64x32, from
+ *          shared memory; K read column-major, as window_attention.comp reads it) into
+ *          a 64x64 float32 result, in XMX_TN-wide tiles
+ *   pv   : the same subgroup's rows of P * V (P 64x64, V 64x32, row-major, shared)
+ *
+ * -DALIASED: shared memory is GL_EXT_shared_memory_block views of one area, as in
+ * window_attention.comp, and the accumulators go through a float view of it (a subgroup's
+ * scratch, stride 32 for qk halves) before being copied out.
+ */
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_scalar_block_layout : require
+#ifdef ALIASED
+#extension GL_EXT_shared_memory_block : require
+#endif
+#ifndef XMX_TN
+#define XMX_TN 8
+#endif
+layout(local_size_x = 256) in;
+layout(binding = 0) buffer Out { uint ids[1024]; float qk[4096]; float pv[2048]; };
+layout(binding = 1) readonly buffer In { float16_t q[2048]; float16_t k[2048];
+                                         float16_t p[4096]; float16_t v[2048]; };
+#ifdef ALIASED
+/* halves: K 0..2047, V 2048..4095, P 4096..8191; floats 4096.. : 8 subgroups x 256 */
+layout(scalar) shared AsHalf { float16_t h16[8192]; };
+layout(scalar) shared AsFloat { float f32[6144]; };
+#define SK h16
+#define SV h16
+#define SP h16
+const uint KO = 0u, VO = 2048u, PO = 4096u;
+#else
+shared float16_t sk[2048], sv[2048], sp[4096];
+#define SK sk
+#define SV sv
+#define SP sp
+const uint KO = 0u, VO = 0u, PO = 0u;
+#endif
+
+void main() {
+    uint lane = gl_LocalInvocationIndex;
+    for (uint i = lane; i < 2048u; i += 256u) { SK[KO + i] = k[i]; SV[VO + i] = v[i]; }
+    for (uint i = lane; i < 4096u; i += 256u) SP[PO + i] = p[i];
+    ids[lane * 4u + 0u] = gl_SubgroupSize;
+    ids[lane * 4u + 1u] = gl_SubgroupID;
+    ids[lane * 4u + 2u] = gl_SubgroupInvocationID;
+    ids[lane * 4u + 3u] = gl_NumSubgroups;
+    barrier();
+    uint sub = gl_SubgroupID, local = gl_SubgroupInvocationID;
+    uint row = sub * 8u;
+#ifdef ARRAY
+    /* the kernel's pattern: all of a row block's accumulators live at once, in an array */
+    {
+        coopmat<float, gl_ScopeSubgroup, 8, XMX_TN, gl_MatrixUseAccumulator> acc[64 / XMX_TN];
+        for (uint j = 0u; j < 64u / XMX_TN; j++)
+            acc[j] = coopmat<float, gl_ScopeSubgroup, 8, XMX_TN, gl_MatrixUseAccumulator>(0.0);
+        for (uint c = 0u; c < 32u; c += 16u) {
+            coopmat<float16_t, gl_ScopeSubgroup, 8, 16, gl_MatrixUseA> a;
+            coopMatLoad(a, q, row * 32u + c, 32u, gl_CooperativeMatrixLayoutRowMajor);
+            for (uint j = 0u; j < 64u / XMX_TN; j++) {
+                coopmat<float16_t, gl_ScopeSubgroup, 16, XMX_TN, gl_MatrixUseB> b;
+                coopMatLoad(b, SK, KO + j * XMX_TN * 32u + c, 32u, gl_CooperativeMatrixLayoutColumnMajor);
+                acc[j] = coopMatMulAdd(a, b, acc[j]);
+            }
+        }
+        for (uint h = 0u; h < 2u; h++)
+            for (uint j = 0u; j < 32u / XMX_TN; j++)
+                coopMatStore(acc[h * (32u / XMX_TN) + j], qk, row * 64u + h * 32u + j * XMX_TN, 64u,
+                             gl_CooperativeMatrixLayoutRowMajor);
+    }
+    for (uint j = 0u; j < 0u; j++) {
+#else
+    for (uint j = 0u; j < 64u / XMX_TN; j++) {
+#endif
+        coopmat<float, gl_ScopeSubgroup, 8, XMX_TN, gl_MatrixUseAccumulator> acc =
+            coopmat<float, gl_ScopeSubgroup, 8, XMX_TN, gl_MatrixUseAccumulator>(0.0);
+        for (uint c = 0u; c < 32u; c += 16u) {
+            coopmat<float16_t, gl_ScopeSubgroup, 8, 16, gl_MatrixUseA> a;
+            coopMatLoad(a, q, row * 32u + c, 32u, gl_CooperativeMatrixLayoutRowMajor);
+            coopmat<float16_t, gl_ScopeSubgroup, 16, XMX_TN, gl_MatrixUseB> b;
+            coopMatLoad(b, SK, KO + j * XMX_TN * 32u + c, 32u, gl_CooperativeMatrixLayoutColumnMajor);
+            acc = coopMatMulAdd(a, b, acc);
+        }
+#ifdef ALIASED
+        /* the kernel's pattern: half the keys at a time, stride 32, then lanes read rows */
+        uint scratch = 4096u + 256u * sub;
+        coopMatStore(acc, f32, scratch + (j % (32u / XMX_TN)) * XMX_TN, 32u,
+                     gl_CooperativeMatrixLayoutRowMajor);
+        subgroupMemoryBarrierShared();
+        subgroupBarrier();
+        if ((j + 1u) % (32u / XMX_TN) == 0u) {
+            uint base = (j + 1u) * XMX_TN - 32u;
+            for (uint at = local; at < 256u; at += 32u)
+                qk[(row + at / 32u) * 64u + base + at % 32u] = f32[scratch + at];
+        }
+        subgroupMemoryBarrierShared();
+        subgroupBarrier();
+#else
+        coopMatStore(acc, qk, row * 64u + j * XMX_TN, 64u, gl_CooperativeMatrixLayoutRowMajor);
+#endif
+    }
+    for (uint j = 0u; j < 32u / XMX_TN; j++) {
+        coopmat<float, gl_ScopeSubgroup, 8, XMX_TN, gl_MatrixUseAccumulator> acc =
+            coopmat<float, gl_ScopeSubgroup, 8, XMX_TN, gl_MatrixUseAccumulator>(0.0);
+        for (uint c = 0u; c < 64u; c += 16u) {
+            coopmat<float16_t, gl_ScopeSubgroup, 8, 16, gl_MatrixUseA> a;
+            coopMatLoad(a, SP, PO + row * 64u + c, 64u, gl_CooperativeMatrixLayoutRowMajor);
+            coopmat<float16_t, gl_ScopeSubgroup, 16, XMX_TN, gl_MatrixUseB> b;
+            coopMatLoad(b, SV, VO + c * 32u + j * XMX_TN, 32u, gl_CooperativeMatrixLayoutRowMajor);
+            acc = coopMatMulAdd(a, b, acc);
+        }
+        coopMatStore(acc, pv, row * 32u + j * XMX_TN, 32u, gl_CooperativeMatrixLayoutRowMajor);
+    }
+}

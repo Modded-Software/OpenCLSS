@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+"""nr-ctl - thin launcher for the nr_ctl module beside it.
+
+The implementation lives in `nr_ctl.py` so it can be imported by name; this file keeps
+the hyphenated command name the manual and the desktop binding use.
+
+    src/layer/nr-ctl                    an interactive session
+    src/layer/nr-ctl on | off           start or hand back the effect
+    src/layer/nr-ctl status
+"""
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from nr_ctl import main
+
+if __name__ == "__main__":
+    sys.exit(main())

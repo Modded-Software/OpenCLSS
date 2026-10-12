@@ -1,0 +1,33 @@
+#version 450
+/*
+ * coopmat_peak - register-only cooperative-matrix throughput: no memory in the loop, so
+ * what it reads is what the matrix units (and the compiler's lowering of coopmat onto them)
+ * deliver at a given subgroup size. Driven by coopmat_peak.c. Each subgroup keeps CHAINS
+ * independent 8xTN accumulators so the DPAS latency is covered.
+ */
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#ifndef XMX_TN
+#define XMX_TN 8
+#endif
+#define CHAINS 8
+layout(local_size_x_id = 0) in;
+layout(constant_id = 1) const uint ITERS = 4096u;
+layout(binding = 0) buffer Out { float o[]; };
+layout(binding = 1) readonly buffer In { float16_t x[]; };
+
+void main() {
+    coopmat<float16_t, gl_ScopeSubgroup, 8, 16, gl_MatrixUseA> a;
+    coopmat<float16_t, gl_ScopeSubgroup, 16, XMX_TN, gl_MatrixUseB> b;
+    coopMatLoad(a, x, 0u, 16u, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatLoad(b, x, 128u, XMX_TN, gl_CooperativeMatrixLayoutRowMajor);
+    coopmat<float, gl_ScopeSubgroup, 8, XMX_TN, gl_MatrixUseAccumulator> acc[CHAINS];
+    for (uint c = 0u; c < CHAINS; c++)
+        acc[c] = coopmat<float, gl_ScopeSubgroup, 8, XMX_TN, gl_MatrixUseAccumulator>(float(c));
+    for (uint i = 0u; i < ITERS; i++)
+        for (uint c = 0u; c < CHAINS; c++)
+            acc[c] = coopMatMulAdd(a, b, acc[c]);
+    for (uint c = 1u; c < CHAINS; c++) acc[0] = acc[0] + acc[c];
+    coopMatStore(acc[0], o, gl_WorkGroupID.x * 8u * XMX_TN, XMX_TN, gl_CooperativeMatrixLayoutRowMajor);
+}

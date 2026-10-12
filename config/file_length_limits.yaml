@@ -1,0 +1,38 @@
+# File Length Limits Configuration
+
+max_lines: 512
+
+extensions:
+  - ".py"
+  - ".sh"
+  - ".js"
+  - ".ts"
+  - ".tsx"
+  - ".rs"
+  - ".css"
+  - ".lua"
+max_file_bytes: 262144
+max_source_files_per_module: 56
+max_submodules_per_module: 8
+max_module_depth: 8
+overrides:
+  - path: src/gpu/xmxres.py
+    max_lines: 1527
+  - path: src/ref/nr_model.py
+    max_lines: 1164
+  - path: src/tools/test_windows_wizard.py
+    max_lines: 925
+  - path: src/ref/nr_frame.py
+    max_lines: 856
+  - path: src/gpu/nr_resident.py
+    max_lines: 760
+  - path: src/gpu/nr_frame_resident.py
+    max_lines: 692
+  - path: src/tools/test_windows_launch.py
+    max_lines: 585
+  - path: src/tools/windows_wizard_core.py
+    max_lines: 1531
+  - path: src/layer/nr_daemon.py
+    max_lines: 1193
+  - path: src/tools/windows_launch.py
+    max_lines: 833

@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""nr-toggle - thin launcher for the nr_toggle module beside it.
+
+The implementation lives in `nr_toggle.py` so it can be imported by name; this file keeps
+the hyphenated command name the desktop shortcut and the manual use.
+
+    src/layer/nr-toggle                 flip the effect
+    src/layer/nr-toggle on | off | temporal | status | install
+"""
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from nr_toggle import main
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

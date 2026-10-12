@@ -1,0 +1,33 @@
+[project]
+name = "dlss-nr-on-intel"
+version = "0.1.0"
+description = "DLSS 5 neural rendering (DLSS-NR) reimplemented for Intel Xe2 / Lunar Lake cooperative-matrix kernels, with the Vulkan layer and daemon that run it in a game."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "numpy==2.5.4",
+    "safetensors==0.8.0",
+    # `compression.zstd` is standard library from Python 3.14 (PEP 784); this
+    # backport carries `src/tools/extract_modules.py` on older interpreters too.
+    "zstandard==0.25.0",
+]
+
+[project.optional-dependencies]
+# Verification-only tools. They are not needed to run the layer, the daemon or the
+# resident graph, so they stay out of the default install and must be asked for.
+check = [
+    "torch==2.14.1",
+    "opencv-python==4.14.0.94",
+]
+
+[tool.uv]
+# This project targets Intel Xe2. The `check` extra only needs torch for a
+# reference comparison, so pull the CPU wheels: the default index would install
+# the entire NVIDIA CUDA stack.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }

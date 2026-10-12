@@ -1,0 +1,66 @@
+# NVIDIA's property - never committed, never redistributed. See notes/CLAUDE.md "Rules".
+*.dll
+*.exe
+*.7z
+
+# Derived from the DLL: the weight container and everything carved out of it.
+weights_ht.bin
+*.ptx
+*.cubin
+*.fatbin
+*.safetensors
+*.npy
+*.npz
+*.bin
+
+__pycache__/
+*.pyc
+
+# Third-party game frames: test material, not code, and somebody else's copyright. A
+# single one was staged once and is still a loose object in this clone - see
+# `src/tools/publish_check.py --history`, which is what found it.
+/pngs/
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.bmp
+*.gif
+*.mp4
+*.webm
+
+# Build output and archives (CMake builds in build/)
+/build*/
+#, none of which belongs in a source tree.
+*.so
+*.dylib
+*.spv
+*.7z
+*.zip
+*.zst
+
+# The whole build tree: object files, executables, generated SPIR-V, staged dependency
+# checkouts and test frames. None of it is source; a build recreates all of it.
+/work/
+
+# The Python virtualenv the scripts and benchmarks run in.
+/.venv/
+
+# The weight container carved out of the DLL, tracked by directory: NVIDIA's property,
+# regenerated locally from the DLL, never published. The .c/.h are the same bytes in
+# another coat.
+/weights/
+
+*.o
+.DS_Store
+
+# scaffold-ci keeps a timestamped copy of a hand-edited file before appending to it.
+*.scaffold-bak.*
+
+# Research notes: the phase-by-phase record, the run logs, and the DLL-derived
+# reverse-engineering dumps. Working documents, not documentation; kept locally
+# only. The three working briefs are published.
+/notes/*
+!/notes/CLAUDE.md
+!/notes/HANDOFF.md
+!/notes/INDEX.md
