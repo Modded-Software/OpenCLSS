@@ -139,7 +139,7 @@ def manual_checks():
     got = subprocess.run([sys.executable, str(ROOT / "src" / "tools" / "knob_doc.py"),
                           "--check"], capture_output=True, text=True, timeout=60)
     detail = got.stdout.strip() or got.stderr.strip()
-    check("the README's knob table is current", got.returncode == 0,
+    check("the settings page's knob table is current", got.returncode == 0,
           detail or "generated from nr_knobs, so it cannot drift")
 
     # A specification whose evidence pointers have rotted is worse than one without any:
@@ -160,7 +160,8 @@ def manual_checks():
         return False
 
     broken = []
-    for page in (ROOT / "README.md", ROOT / "docs" / "ARCHITECTURE.md", ROOT / "NOTICE"):
+    for page in (ROOT / "README.md", ROOT / "docs" / "ARCHITECTURE.md",
+                 ROOT / "docs" / "SETTINGS.md", ROOT / "NOTICE"):
         if not page.exists():
             broken.append(f"{page.name} is missing")
             continue

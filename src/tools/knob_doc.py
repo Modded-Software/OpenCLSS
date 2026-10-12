@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the generated parts of the README, so the manual cannot drift from the program.
+"""Render the generated parts of docs/SETTINGS.md, so the manual cannot drift from the program.
 
 Two blocks: the knobs, and the measured frame times. Both come from `nr_knobs`, which the
 control tools read as well, so the page and the programs cannot disagree.
@@ -20,7 +20,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src" / "layer"))
 import nr_knobs  # noqa: E402
 
-README = ROOT / "README.md"
+README = ROOT / "docs" / "SETTINGS.md"
 
 
 def knobs():
@@ -38,7 +38,7 @@ def knobs():
 
 def rates():
     lines = [f"Measured through the socket on {nr_knobs.RATES_MEASURED} by "
-             "`python3 src/bench/live_rates.py` - the whole round trip a game waits for, "
+             "`uv run python src/bench/live_rates.py` - the whole round trip a game waits for, "
              "median of nine frames, not graph time alone:", "",
              "| swapchain | render scale | ms | fps |", "| --- | ---: | ---: | ---: |"]
     for width, height, scale, ms in nr_knobs.RATES:
