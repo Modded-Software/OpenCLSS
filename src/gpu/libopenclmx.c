@@ -738,6 +738,100 @@ static const char *GEMM_BLK_SRC =
 "    }\n" \
 "}\n"
 
+/* ---- the QKV projection finished in its own epilogue (P3) -------------------------- */
+/* The projection GEMM with Q and K cosine-normalised and V published before the block
+ * leaves the workgroup, so the float32 projection never goes to memory and the two row
+ * passes and the split that read it back are gone (the vendor's `qkv_epilogue.glsl`, worth
+ * 21.6 % of a 720p frame there). Bit-identical to `xmx_rec_row`'s COSINE_PUBLISH for Q and
+ * K and `xmx_rec_unary`'s SPLIT_HEADS for V: the raw accumulator is the value they would
+ * have read back, the reciprocal norm is `COSINE_TREE`'s one definition, and the per-element
+ * steps are theirs in their order.
+ *
+ * A workgroup is two subgroups (16 threads) covering one 32-column block - exactly one head
+ * of one of Q, K or V, since the column block is 32 wide and 32-aligned. Each subgroup
+ * computes 16 columns with the shipping FMA core (RM=2, RN=2, unchanged), stages the raw
+ * accumulators to shared memory, and after a workgroup barrier one invocation per row
+ * normalises its 32 channels in place. The GEMM arithmetic is therefore the shipped one. */
+#define GEMM_QKV_SRC COSINE_TREE \
+"#ifndef RM\n#define RM 2\n#endif\n" \
+"#ifndef RN\n#define RN 2\n#endif\n" \
+"#define QKV_COLS 32\n" \
+"#define QKV_THREADS 16\n" \
+"__attribute__((intel_reqd_sub_group_size(8)))\n" \
+"__kernel void gemm_qkv(__global const half *A, __global const half *B,\n" \
+"                       __global half *Q, __global half *Kt, __global half *V,\n" \
+"                       __global const float *Scale,\n" \
+"                       unsigned M, unsigned N, unsigned K,\n" \
+"                       unsigned lda, unsigned ldb, unsigned oa, unsigned ob,\n" \
+"                       unsigned tokens, unsigned heads, unsigned vit)\n" \
+"{\n" \
+"    __local float stg[8 * RM][QKV_COLS + 1];   /* +1 float so a row read is conflict-free */\n" \
+"    unsigned lid = get_local_id(0), sg = lid >> 3u, lane = lid & 7u;\n" \
+"    unsigned row0 = get_group_id(1) * (8 * RM);\n" \
+"    unsigned col0 = get_group_id(0) * QKV_COLS;\n" \
+"    A += oa; B += ob;\n" \
+"    unsigned col = col0 + sg * (8 * RN);\n" \
+"    float8 acc[RM][RN];\n" \
+"#pragma unroll\n" \
+"    for (unsigned r = 0; r < RM; r++)\n" \
+"#pragma unroll\n" \
+"        for (unsigned c = 0; c < RN; c++) acc[r][c] = (float8)(0.0f);\n" \
+"    for (unsigned k = 0; k < K; k += 8) {\n" \
+"        float bv[RN][8];\n" \
+"#pragma unroll\n" \
+"        for (unsigned c = 0; c < RN; c++) {\n" \
+"            unsigned bcol = col + c * 8 + lane;\n" \
+"#pragma unroll\n" \
+"            for (unsigned j = 0; j < 8; j++)\n" \
+"                bv[c][j] = (float)B[(size_t)(k + j) * ldb + bcol];\n" \
+"        }\n" \
+"#pragma unroll\n" \
+"        for (unsigned r = 0; r < RM; r++)\n" \
+"#pragma unroll\n" \
+"            for (unsigned i = 0; i < 8; i++) {\n" \
+"                float4 lo = vload_half4(0, A + (size_t)(row0 + r * 8 + i) * lda + k);\n" \
+"                float4 hi = vload_half4(0, A + (size_t)(row0 + r * 8 + i) * lda + k + 4);\n" \
+"                float av[8] = { lo.s0, lo.s1, lo.s2, lo.s3, hi.s0, hi.s1, hi.s2, hi.s3 };\n" \
+"#pragma unroll\n" \
+"                for (unsigned c = 0; c < RN; c++) {\n" \
+"                    float s = acc[r][c][i];\n" \
+"#pragma unroll\n" \
+"                    for (unsigned j = 0; j < 8; j++) s = mad(av[j], bv[c][j], s);\n" \
+"                    acc[r][c][i] = s;\n" \
+"                }\n" \
+"            }\n" \
+"    }\n" \
+"#pragma unroll\n" \
+"    for (unsigned r = 0; r < RM; r++)\n" \
+"#pragma unroll\n" \
+"        for (unsigned i = 0; i < 8; i++)\n" \
+"#pragma unroll\n" \
+"            for (unsigned c = 0; c < RN; c++)\n" \
+"                stg[r * 8 + i][sg * (8 * RN) + c * 8 + lane] = acc[r][c][i];\n" \
+"    barrier(CLK_LOCAL_MEM_FENCE);\n" \
+"    unsigned chunk = col0 >> 5u;\n" \
+"    unsigned part = chunk / heads, head = chunk % heads;\n" \
+"    for (unsigned lr = lid; lr < 8 * RM; lr += QKV_THREADS) {\n" \
+"        unsigned m = row0 + lr;\n" \
+"        unsigned at = (((m / tokens) * heads + head) * tokens + (m % tokens)) * 32u;\n" \
+"        if (part == 2u) {\n" \
+"            for (unsigned d = 0; d < 32u; d++) V[at + d] = (half)e4m3(stg[lr][d]);\n" \
+"            continue;\n" \
+"        }\n" \
+"        float h[32];\n" \
+"        for (unsigned d = 0; d < 32u; d++) h[d] = HROUND(stg[lr][d]);\n" \
+"        float reciprocal = vit ? vit_reciprocal(h) : cosine_reciprocal(h);\n" \
+"        float scale = part == 0u ? HROUND(Scale[head]) : 1.0f;\n" \
+"        __global half *dst = part == 0u ? Q : Kt;\n" \
+"        for (unsigned d = 0; d < 32u; d++) {\n" \
+"            float value = hmul(h[d], reciprocal);\n" \
+"            if (part == 0u) value = hmul(vit ? hmul(value, VIT_ROOT) : value, scale);\n" \
+"            value = e4m3(value);\n" \
+"            dst[at + d] = (half)value;\n" \
+"        }\n" \
+"    }\n" \
+"}\n"
+
 /* ---- runtime state ---------------------------------------------------------------- */
 #define MAX_BUF 8192
 #define MAX_GRAPHS 64
@@ -748,6 +842,7 @@ static const char *GEMM_BLK_SRC =
 #define K_UNARY2 3
 #define K_ROW 4
 #define K_COMPOSED 5
+#define K_GEMM_QKV 6
 
 struct buffer {
 	int used;
@@ -796,6 +891,7 @@ static struct {
 	cl_kernel gemm_small;       /* RM=1: one 8-row tile, for M that is not a multiple of 16 */
 	cl_kernel gemm_blk;         /* block-read A + VNNI-packed B (P1) */
 	cl_kernel pack;             /* B -> VNNI fragments for gemm_blk */
+	cl_kernel gemm_qkv;         /* the QKV projection with its epilogue fused (P3) */
 	cl_kernel resident;
 	cl_kernel row;
 	int rm, rn;
@@ -1032,6 +1128,22 @@ int xmx_open(void)
 	}
 	if (!g.gemm)
 		return -1;
+	/* The fused QKV-epilogue projection (P3). A build failure is not fatal: xmx_rec_gemm_qkv
+	 * falls back to the decomposed passes. XMX_CL_GEMM_OPTS is shared with the GEMM. */
+	{
+		size_t n = strlen(CL_COMMON) + strlen(GEMM_QKV_SRC) + 1;
+		char *src = malloc(n);
+		if (src) {
+			snprintf(src, n, "%s%s", CL_COMMON, GEMM_QKV_SRC);
+			const char *gx = getenv("XMX_CL_GEMM_OPTS") ? getenv("XMX_CL_GEMM_OPTS") : "";
+			char oq[256];
+			snprintf(oq, sizeof oq, "-D RM=2 -D RN=%d %s", g.rn, gx);
+			g.gemm_qkv = build_kernel(src, oq, "gemm_qkv");
+			if (g.gemm_qkv)
+				g.error[0] = 0;   /* not fatal: the decomposed path stays available */
+			free(src);
+		}
+	}
 	/* The block-read GEMM and its packer. P1's fast path; the packer is authoritative only
 	 * when the buffers it names allow it (run_gemm's guards). XMX_CL_GEMM_OPTS overrides
 	 * the flags for diagnosis. */
@@ -1485,6 +1597,48 @@ struct buffer *A = slot(c->a), *B = slot(c->b), *C = slot(c->c);
 	return 0;
 }
 
+/* The fused QKV-epilogue projection: A[M][K] x B[K][N] with N = 3C, a 32-column block per
+ * workgroup (two subgroups of 8), then the normalise-and-publish epilogue in the kernel.
+ * c->c/d/second are Q/K/V, c->n is the scale buffer, c->width/c->heads are tokens/heads. */
+static int run_gemm_qkv(const struct cmd *c)
+{
+	struct buffer *A = slot(c->a), *B = slot(c->b);
+	struct buffer *Q = slot(c->c), *Kb = slot(c->d), *V = slot(c->second);
+	struct buffer *S = slot((int)c->n);
+	if (!A || !B || !Q || !Kb || !V || !S)
+		return fail("gemm_qkv: bad buffer");
+	cl_uint M = c->M, N = c->N, K = c->K, lda = c->lda, ldb = c->ldb;
+	cl_uint oa = c->oa, ob = c->ob, tokens = c->width, heads = c->heads, vit = c->flags;
+	int i = 0;
+	clSetKernelArg(g.gemm_qkv, i++, sizeof(cl_mem), &A->mem);
+	clSetKernelArg(g.gemm_qkv, i++, sizeof(cl_mem), &B->mem);
+	clSetKernelArg(g.gemm_qkv, i++, sizeof(cl_mem), &Q->mem);
+	clSetKernelArg(g.gemm_qkv, i++, sizeof(cl_mem), &Kb->mem);
+	clSetKernelArg(g.gemm_qkv, i++, sizeof(cl_mem), &V->mem);
+	clSetKernelArg(g.gemm_qkv, i++, sizeof(cl_mem), &S->mem);
+	clSetKernelArg(g.gemm_qkv, i++, sizeof(cl_uint), &M);
+	clSetKernelArg(g.gemm_qkv, i++, sizeof(cl_uint), &N);
+	clSetKernelArg(g.gemm_qkv, i++, sizeof(cl_uint), &K);
+	clSetKernelArg(g.gemm_qkv, i++, sizeof(cl_uint), &lda);
+	clSetKernelArg(g.gemm_qkv, i++, sizeof(cl_uint), &ldb);
+	clSetKernelArg(g.gemm_qkv, i++, sizeof(cl_uint), &oa);
+	clSetKernelArg(g.gemm_qkv, i++, sizeof(cl_uint), &ob);
+	clSetKernelArg(g.gemm_qkv, i++, sizeof(cl_uint), &tokens);
+	clSetKernelArg(g.gemm_qkv, i++, sizeof(cl_uint), &heads);
+	clSetKernelArg(g.gemm_qkv, i++, sizeof(cl_uint), &vit);
+	size_t work[3] = { (size_t)(N / 32u) * 16u, (size_t)(M / 16u), 1u };
+	size_t group[3] = { 16, 1, 1 };
+	cl_event ev = NULL;
+	cl_int err = clEnqueueNDRangeKernel(g.q, g.gemm_qkv, 3, NULL, work, group, 0, NULL,
+					    profiling() ? &ev : NULL);
+	if (err != CL_SUCCESS)
+		return fail("gemm_qkv dispatch: %d", err);
+	if (getenv("XMX_CL_SERIAL"))
+		clFinish(g.q);
+	trace_push(ev, 0);
+	return 0;
+}
+
 static int run_unary(const struct cmd *c);
 static int run_row(const struct cmd *c);
 
@@ -1586,12 +1740,24 @@ static void bump_written(const struct cmd *c)
 		g.buf[c->second].gen++;
 	else if (c->kind == K_ROW && c->d >= 0 && c->d < MAX_BUF && g.buf[c->d].used)
 		g.buf[c->d].gen++;
+	if (c->kind == K_GEMM_QKV) {          /* Q, K and V are all written */
+		if (c->d >= 0 && c->d < MAX_BUF && g.buf[c->d].used)
+			g.buf[c->d].gen++;
+		if (c->second >= 0 && c->second < MAX_BUF && g.buf[c->second].used)
+			g.buf[c->second].gen++;
+	}
 }
 
 static int exec_one(const struct cmd *c)
 {
 	if (c->kind == K_GEMM) {
 		if (run_gemm(c))
+			return -1;
+		bump_written(c);
+		return 0;
+	}
+	if (c->kind == K_GEMM_QKV) {
+		if (run_gemm_qkv(c))
 			return -1;
 		bump_written(c);
 		return 0;
@@ -1660,6 +1826,10 @@ static void collect_pull(const struct cmd *c, unsigned char *pull)
 	if (c->c >= 0 && c->c < MAX_BUF) pull[c->c] = 1;
 	if (c->kind == K_UNARY2 && c->second >= 0 && c->second < MAX_BUF) pull[c->second] = 1;
 	if (c->kind == K_ROW && c->d >= 0 && c->d < MAX_BUF) pull[c->d] = 1;
+	if (c->kind == K_GEMM_QKV) {          /* Q, K and V are all written */
+		if (c->d >= 0 && c->d < MAX_BUF) pull[c->d] = 1;
+		if (c->second >= 0 && c->second < MAX_BUF) pull[c->second] = 1;
+	}
 }
 
 static int execute(const struct cmd *list, int n)
@@ -2006,10 +2176,24 @@ int xmx_rec_unary(unsigned kind, int a, int b, int c, int d, unsigned n, unsigne
 int xmx_rec_row(unsigned kind, int a, int b, int c, int d, unsigned rows, unsigned width,
 		unsigned heads, unsigned scaled, unsigned stride, float cap);
 
-/* The QKV projection as the passes it replaces: the GEMM into float32, cosine_publish for
- * Q (with its head's scale) and K, split_heads with the E4M3 publish for V. Bit-identical
- * to that reference by construction. ponytail: the float32 projection goes through device
- * memory; folding the three into the GEMM's epilogue is P3. */
+/* The fused projection is used when the kernel built and the shape is tile-aligned: an
+ * M multiple of the 16-row block (two subgroups, RM=2) and a column block of 32 that
+ * divides 3C - which 3*heads*32 always does. NR_QKV_EPILOGUE=0 restores the four passes. */
+static int qkv_fuse_ok(unsigned M, unsigned channels)
+{
+	if (!g.gemm_qkv)
+		return 0;
+	const char *env = getenv("NR_QKV_EPILOGUE");
+	if (env && env[0] == '0' && env[1] == '\0')
+		return 0;
+	return (M % 16u) == 0u && (channels % 16u) == 0u;
+}
+
+/* The QKV projection. Fused (P3) the GEMM's epilogue normalises Q and K and publishes V
+ * in the kernel, so the float32 projection never goes to memory; otherwise it is the four
+ * passes it replaces - the GEMM into float32, cosine_publish for Q (with its head's scale)
+ * and K, split_heads with the E4M3 publish for V. Both write the same bytes (test_gemm_qkv
+ * compares the two paths directly, and the fused one against the reference). */
 int xmx_rec_gemm_qkv(int a, int weight, int q, int k, int v, int scale, unsigned M,
 		     unsigned channels, unsigned heads, unsigned tokens, unsigned vit)
 {
@@ -2018,6 +2202,17 @@ int xmx_rec_gemm_qkv(int a, int weight, int q, int k, int v, int scale, unsigned
 	if (!slot(a) || !slot(weight) || !slot(q) || !slot(k) || !slot(v) || !slot(scale))
 		return fail("QKV projection operand is not a live buffer");
 	unsigned c3 = 3u * channels;
+	if (qkv_fuse_ok(M, channels)) {
+		if (g.ncmd >= MAX_CMD)
+			return fail("command list full");
+		struct cmd *cm = new_cmd(K_GEMM_QKV);
+		cm->a = a; cm->b = weight; cm->c = q; cm->d = k; cm->second = v;
+		cm->M = M; cm->N = c3; cm->K = channels;
+		cm->lda = channels; cm->ldb = c3; cm->oa = 0; cm->ob = 0;
+		cm->width = tokens; cm->heads = heads; cm->n = (unsigned)scale; cm->flags = vit;
+		cm->stamp = PK(PK_GEMM, 0);
+		return 0;
+	}
 	int proj = scratch(SCR_PROJ, (unsigned long long)M * c3 * 4u);
 	if (proj < 0)
 		return -1;
