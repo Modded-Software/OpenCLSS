@@ -1251,7 +1251,18 @@ int xmx_open(void)
 	if (g.time)
 		g_trace = malloc(sizeof(*g_trace) * MAX_CMD);
 	g.rm = 2;
-	g.rn = 2;
+	/* The plain GEMM's column tile, in 8-lane steps: an 8-wide (RN=1) tile measured
+	 * consistently ~2.4% faster than the 16-wide default on the frame - more workgroups
+	 * per shape, and the block-read kernel already runs at RN=1. Overridable for A/B. */
+	g.rn = 1;
+	{
+		const char *e = getenv("XMX_GEMM_RN");
+		if (e) {
+			int v = atoi(e);
+			if (v == 1 || v == 2)
+				g.rn = v;
+		}
+	}
 	g.coopmat_n = 8;
 	{
 		size_t n = strlen(CL_COMMON) + strlen(GEMM_SRC) + 1;
@@ -1285,7 +1296,9 @@ int xmx_open(void)
 			snprintf(src, n, "%s%s", CL_COMMON, GEMM_QKV_SRC);
 			const char *gx = getenv("XMX_CL_GEMM_OPTS") ? getenv("XMX_CL_GEMM_OPTS") : "";
 			char oq[256];
-			snprintf(oq, sizeof oq, "-D RM=2 -D RN=%d %s", g.rn, gx);
+			/* The QKV epilogue's two subgroups cover a fixed 32-column block, so
+			 * this kernel's RN is 2 whatever XMX_GEMM_RN tunes the plain GEMM to. */
+			snprintf(oq, sizeof oq, "-D RM=2 -D RN=2 %s", gx);
 			g.gemm_qkv = build_kernel(src, oq, "gemm_qkv");
 			if (g.gemm_qkv)
 				g.error[0] = 0;   /* not fatal: the decomposed path stays available */
