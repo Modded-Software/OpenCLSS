@@ -860,6 +860,126 @@ static const char *GEMM_BLK_SRC =
 "    }\n" \
 "}\n"
 
+/* ---- window attention finished on-chip (P3) ---------------------------------------- */
+/* One workgroup per (window, head), eight SIMD8 subgroups; subgroup s owns query rows
+ * 8s..8s+7 and every key. Lane l owns the key pairs (2l, 2l+1) and (16+2l, 16+2l+1) of
+ * each 32-key half, so the coupled `pair_fast` transform runs inside the lane; the
+ * shipping FMA core's 8-wide K tiling is reproduced inside (a uniform Q row against four
+ * staged K keys), so K is read once and reused across eight rows instead of reloaded per
+ * row (Run 33's row-per-lane kernel lost for exactly that reason). The scores and
+ * probabilities never leave shared memory; the row SOFTMAX's coupled denominator and the
+ * uncoupled per-key probabilities are reproduced bit for bit. */
+#define ATTN_SRC CL_COMMON COSINE_TREE \
+"typedef union { uint u; half2 h; } attn_h2;\n" \
+"inline float attn_affine(float l) {\n" \
+"    return clamp(HROUND(l) * 0.044921875f + 1.30078125f, 1.03125f, 1.5693359375f);\n" \
+"}\n" \
+"inline float attn_weight(uint packed_a) {\n" \
+"    attn_h2 c; c.u = 0u; c.u = ((packed_a << 5) + 0x8000u) & 0xFFFFu;\n" \
+"    return (float)c.h.s0;\n" \
+"}\n" \
+"__attribute__((intel_reqd_sub_group_size(8)))\n" \
+"__kernel void attn(__global const half *Q, __global const half *Kb, __global const half *Vb,\n" \
+"                   __global const float *Bias, __global float *Ctx, __global half *Out,\n" \
+"                   uint batches, uint heads, uint merged, uint bias_on)\n" \
+"{\n" \
+"    uint b = get_group_id(0);\n" \
+"    if (b >= batches) return;\n" \
+"    uint head = b % heads, window = b / heads;\n" \
+"    size_t base = (size_t)b * 2048u;\n" \
+"    uint sub = get_local_id(0) >> 3u, lane = get_sub_group_local_id();\n" \
+"    __local uint sm[64][33];\n" \
+"    for (uint hh = 0u; hh < 2u; hh++) {\n" \
+"        float acc[8][4];\n" \
+"        for (uint i = 0u; i < 8u; i++)\n" \
+"            for (uint q = 0u; q < 4u; q++) acc[i][q] = 0.0f;\n" \
+"        uint key[4];\n" \
+"        key[0] = 32u * hh + 2u * lane; key[1] = key[0] + 1u;\n" \
+"        key[2] = 32u * hh + 16u + 2u * lane; key[3] = key[2] + 1u;\n" \
+"        for (uint k = 0u; k < 32u; k += 8u) {\n" \
+"            float kv[4][8];\n" \
+"            for (uint q = 0u; q < 4u; q++) {\n" \
+"                float8 t = vload_half8(0, Kb + base + (size_t)key[q] * 32u + k);\n" \
+"                kv[q][0] = t.s0; kv[q][1] = t.s1; kv[q][2] = t.s2; kv[q][3] = t.s3;\n" \
+"                kv[q][4] = t.s4; kv[q][5] = t.s5; kv[q][6] = t.s6; kv[q][7] = t.s7;\n" \
+"            }\n" \
+"            for (uint i = 0u; i < 8u; i++) {\n" \
+"                float8 qv = vload_half8(0, Q + base + (size_t)(8u * sub + i) * 32u + k);\n" \
+"                for (uint q = 0u; q < 4u; q++) {\n" \
+"                    float s = acc[i][q];\n" \
+"                    s = mad(qv.s0, kv[q][0], s); s = mad(qv.s1, kv[q][1], s);\n" \
+"                    s = mad(qv.s2, kv[q][2], s); s = mad(qv.s3, kv[q][3], s);\n" \
+"                    s = mad(qv.s4, kv[q][4], s); s = mad(qv.s5, kv[q][5], s);\n" \
+"                    s = mad(qv.s6, kv[q][6], s); s = mad(qv.s7, kv[q][7], s);\n" \
+"                    acc[i][q] = s;\n" \
+"                }\n" \
+"            }\n" \
+"        }\n" \
+"        for (uint i = 0u; i < 8u; i++) {\n" \
+"            uint token = 8u * sub + i;\n" \
+"            size_t bat = (size_t)head * 4096u + (size_t)token * 64u;\n" \
+"            for (uint c2 = 0u; c2 < 2u; c2++) {\n" \
+"                uint pa = 32u * hh + 16u * c2 + 2u * lane;\n" \
+"                float l0 = acc[i][2u * c2], l1 = acc[i][2u * c2 + 1u];\n" \
+"                if (bias_on) { l0 += Bias[bat + pa]; l1 += Bias[bat + pa + 1u]; }\n" \
+"                attn_h2 c; c.h = (half2)(attn_affine(l0), attn_affine(l1));\n" \
+"                sm[token][16u * hh + 8u * c2 + lane] = c.u;\n" \
+"            }\n" \
+"        }\n" \
+"    }\n" \
+"    barrier(CLK_LOCAL_MEM_FENCE);\n" \
+"    {\n" \
+"        uint token = 8u * sub + lane;\n" \
+"        float total = 0.0f;\n" \
+"        for (uint p = 0u; p < 32u; p++) {\n" \
+"            attn_h2 c; c.u = (sm[token][p] << 5) + 0x7FF88000u;\n" \
+"            total += (float)c.h.s0; total += (float)c.h.s1;\n" \
+"        }\n" \
+"        float reciprocal = HROUND(1.0f / HROUND(total));\n" \
+"        for (uint p = 0u; p < 32u; p++) {\n" \
+"            uint packed = sm[token][p];\n" \
+"            float e = e4m3(hmul(attn_weight(packed & 0xFFFFu), reciprocal));\n" \
+"            float o = e4m3(hmul(attn_weight(packed >> 16), reciprocal));\n" \
+"            attn_h2 c; c.h = (half2)(e, o);\n" \
+"            sm[token][p] = c.u;\n" \
+"        }\n" \
+"    }\n" \
+"    barrier(CLK_LOCAL_MEM_FENCE);\n" \
+"    {\n" \
+"        float acc[8][4];\n" \
+"        for (uint i = 0u; i < 8u; i++)\n" \
+"            for (uint c = 0u; c < 4u; c++) acc[i][c] = 0.0f;\n" \
+"        for (uint jb = 0u; jb < 64u; jb += 8u) {\n" \
+"            float vv[8][4];\n" \
+"            for (uint jj = 0u; jj < 8u; jj++) {\n" \
+"                float4 t = vload_half4(0, Vb + base + (size_t)(jb + jj) * 32u + 4u * lane);\n" \
+"                vv[jj][0] = t.s0; vv[jj][1] = t.s1; vv[jj][2] = t.s2; vv[jj][3] = t.s3;\n" \
+"            }\n" \
+"            for (uint i = 0u; i < 8u; i++) {\n" \
+"                __local const half *pr = (__local const half *)&sm[8u * sub + i][jb >> 1];\n" \
+"                float8 pv = vload_half8(0, pr);\n" \
+"                for (uint c = 0u; c < 4u; c++) {\n" \
+"                    float s = acc[i][c];\n" \
+"                    s = mad(pv.s0, vv[0][c], s); s = mad(pv.s1, vv[1][c], s);\n" \
+"                    s = mad(pv.s2, vv[2][c], s); s = mad(pv.s3, vv[3][c], s);\n" \
+"                    s = mad(pv.s4, vv[4][c], s); s = mad(pv.s5, vv[5][c], s);\n" \
+"                    s = mad(pv.s6, vv[6][c], s); s = mad(pv.s7, vv[7][c], s);\n" \
+"                    acc[i][c] = s;\n" \
+"                }\n" \
+"            }\n" \
+"        }\n" \
+"        for (uint i = 0u; i < 8u; i++) {\n" \
+"            uint token = 8u * sub + i;\n" \
+"            for (uint c = 0u; c < 4u; c++) {\n" \
+"                uint d = 4u * lane + c;\n" \
+"                if (merged) Out[(((size_t)window * 64u + token) * heads + head) * 32u + d]\n" \
+"                    = (half)e4m3(acc[i][c]);\n" \
+"                else Ctx[((size_t)b * 64u + token) * 32u + d] = acc[i][c];\n" \
+"            }\n" \
+"        }\n" \
+"    }\n" \
+"}\n"
+
 /* ---- runtime state ---------------------------------------------------------------- */
 #define MAX_BUF 8192
 #define MAX_GRAPHS 64
@@ -871,6 +991,7 @@ static const char *GEMM_BLK_SRC =
 #define K_ROW 4
 #define K_COMPOSED 5
 #define K_GEMM_QKV 6
+#define K_ATTN 7
 
 struct buffer {
 	int used;
@@ -920,6 +1041,7 @@ static struct {
 	cl_kernel gemm_blk;         /* block-read A + VNNI-packed B (P1) */
 	cl_kernel pack;             /* B -> VNNI fragments for gemm_blk */
 	cl_kernel gemm_qkv;         /* the QKV projection with its epilogue fused (P3) */
+	cl_kernel attn;             /* the window attention finished on-chip (P3) */
 	cl_kernel resident;
 	cl_kernel row;
 	int rm, rn;
@@ -1190,6 +1312,11 @@ int xmx_open(void)
 		if (g.gemm_blk && g.pack)
 			g.error[0] = 0;   /* build_kernel's failure is not fatal: the scalar path stays */
 	}
+	/* The window attention finished on-chip (P3). A build failure is not fatal:
+	 * xmx_rec_window_attention keeps the decomposed passes. */
+	g.attn = build_kernel(ATTN_SRC, NULL, "attn");
+	if (g.attn)
+		g.error[0] = 0;
 	g.resident = build_kernel(RESIDENT_SRC, NULL, "resident");
 	if (!g.resident)
 		return -1;
@@ -1667,6 +1794,45 @@ static int run_gemm_qkv(const struct cmd *c)
 	return 0;
 }
 
+/* The window attention finished on-chip: one workgroup a (window, head), Q/K/V in
+ * (window, head, token, 32) order. c->c/d/second are Q/K/V, c->a is the optional bias,
+ * c->b is the context (unmerged) output, c->M is batches (windows*heads), c->N is heads,
+ * c->flags bit 0 selects the merged output at c->b. */
+static int run_attn(const struct cmd *c)
+{
+	struct buffer *Q = slot(c->c), *Kb = slot(c->d), *V = slot(c->second);
+	struct buffer *Out = slot(c->b);
+	int merged = (int)(c->flags & 1u);
+	if (!Q || !Kb || !V || !Out)
+		return fail("attn: bad buffer");
+	struct buffer *Bias = c->a >= 0 ? slot((int)c->a) : NULL;
+	cl_uint batches = c->M, heads = c->N, merged_u = (cl_uint)merged;
+	cl_uint bias_on = Bias ? 1u : 0u;
+	cl_mem bias_mem = Bias ? Bias->mem : Out->mem;   /* unused when bias_on is 0 */
+	int i = 0;
+	clSetKernelArg(g.attn, i++, sizeof(cl_mem), &Q->mem);
+	clSetKernelArg(g.attn, i++, sizeof(cl_mem), &Kb->mem);
+	clSetKernelArg(g.attn, i++, sizeof(cl_mem), &V->mem);
+	clSetKernelArg(g.attn, i++, sizeof(cl_mem), &bias_mem);
+	clSetKernelArg(g.attn, i++, sizeof(cl_mem), &Out->mem);   /* the context or its dummy */
+	clSetKernelArg(g.attn, i++, sizeof(cl_mem), &Out->mem);
+	clSetKernelArg(g.attn, i++, sizeof(cl_uint), &batches);
+	clSetKernelArg(g.attn, i++, sizeof(cl_uint), &heads);
+	clSetKernelArg(g.attn, i++, sizeof(cl_uint), &merged_u);
+	clSetKernelArg(g.attn, i++, sizeof(cl_uint), &bias_on);
+	size_t work[1] = { (size_t)batches * 64u };
+	size_t group[1] = { 64 };
+	cl_event ev = NULL;
+	cl_int err = clEnqueueNDRangeKernel(g.q, g.attn, 1, NULL, work, group, 0, NULL,
+					    profiling() ? &ev : NULL);
+	if (err != CL_SUCCESS)
+		return fail("attn dispatch: %d", err);
+	if (getenv("XMX_CL_SERIAL"))
+		clFinish(g.q);
+	trace_push(ev, 0);
+	return 0;
+}
+
 static int run_unary(const struct cmd *c);
 static int run_row(const struct cmd *c);
 
@@ -1762,6 +1928,13 @@ static void trace_command(const struct cmd *c)
  * submit, is what made the single- and block-schedule frames differ). */
 static void bump_written(const struct cmd *c)
 {
+	if (c->kind == K_ATTN) {              /* c->b is the context, c->a the merged output */
+		if (c->b >= 0 && c->b < MAX_BUF && g.buf[c->b].used)
+			g.buf[c->b].gen++;
+		if ((c->flags & 1u) && c->a >= 0 && c->a < MAX_BUF && g.buf[c->a].used)
+			g.buf[c->a].gen++;
+		return;
+	}
 	if (c->c >= 0 && c->c < MAX_BUF && g.buf[c->c].used)
 		g.buf[c->c].gen++;
 	if (c->kind == K_UNARY2 && c->second >= 0 && c->second < MAX_BUF && g.buf[c->second].used)
@@ -1786,6 +1959,12 @@ static int exec_one(const struct cmd *c)
 	}
 	if (c->kind == K_GEMM_QKV) {
 		if (run_gemm_qkv(c))
+			return -1;
+		bump_written(c);
+		return 0;
+	}
+	if (c->kind == K_ATTN) {
+		if (run_attn(c))
 			return -1;
 		bump_written(c);
 		return 0;
@@ -1849,6 +2028,11 @@ static void collect_pull(const struct cmd *c, unsigned char *pull)
 	if (c->kind == K_COMPOSED) {
 		for (int j = 0; j < c->nparts; j++)
 			collect_pull(&c->parts[j], pull);
+		return;
+	}
+	if (c->kind == K_ATTN) {              /* c->b is the context, c->a the merged output */
+		if (c->b >= 0 && c->b < MAX_BUF) pull[c->b] = 1;
+		if ((c->flags & 1u) && c->a >= 0 && c->a < MAX_BUF) pull[c->a] = 1;
 		return;
 	}
 	if (c->c >= 0 && c->c < MAX_BUF) pull[c->c] = 1;
@@ -2448,6 +2632,20 @@ int xmx_rec_window_attention(int q, int k, int v, int bias, int out, unsigned ba
 		return fail("invalid attention batch/head count");
 	if (!slot(q) || !slot(k) || !slot(v) || !slot(out) || (bias >= 0 && !slot(bias)))
 		return fail("window attention operand is not a live buffer");
+	/* The fused path: QK^T, the bit-affine softmax and PV in one workgroup a (window,
+	 * head), the scores and probabilities on-chip. Exact by construction against the
+	 * decomposed passes below (test_window_attention.py). NR_WINDOW_ATTENTION_SPLIT=1
+	 * forces the decomposed path for A/B. */
+	if (g.attn && !getenv("NR_WINDOW_ATTENTION_SPLIT")) {
+		if (g.ncmd >= MAX_CMD)
+			return fail("command list full");
+		struct cmd *cm = new_cmd(K_ATTN);
+		cm->kind = K_ATTN;
+		cm->c = q; cm->d = k; cm->second = v; cm->a = bias; cm->b = out;
+		cm->M = batches; cm->N = heads; cm->flags = merged;
+		cm->stamp = PK_ROW * 32 + 3;
+		return 0;
+	}
 	int scores = scratch(SCR_SCORES, (unsigned long long)batches * 4096u * 4u);
 	int probs = scores < 0 ? -1 : scratch(SCR_PROBS, (unsigned long long)batches * 4096u * 2u);
 	int ctx = !merged ? out : probs < 0 ? -1
