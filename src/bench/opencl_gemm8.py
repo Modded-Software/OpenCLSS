@@ -14,8 +14,23 @@ import argparse, ctypes, os, pathlib, sys, time
 import numpy as np
 
 VECFLAG = "-DVEC" if os.environ.get("VEC") else ""
+# CL_SRC picks the kernel file beside this one; a "blk" kernel takes B VNNI-packed.
+CL_SRC = os.environ.get("CL_SRC", "opencl_gemm8.cl")
+PACKED = "blk" in CL_SRC
 
-CL = ctypes.CDLL("libOpenCL.so")
+
+def pack_vnni(B):
+    """(batch, K, N) half -> the blk kernel's fragments: [batch][K/16][N/8][i][lane] uint32
+    holding (B[k0 + 2i][n], B[k0 + 2i + 1][n]), the even k in the low half."""
+    batch, K, N = B.shape
+    t = B.reshape(batch, K // 16, 8, 2, N // 8, 8).transpose(0, 1, 4, 2, 5, 3)
+    return np.ascontiguousarray(t).view(np.uint32).reshape(batch, K * N // 2)
+
+# Debian ships only the soname (libOpenCL.so.1) unless the -dev package is installed.
+try:
+    CL = ctypes.CDLL("libOpenCL.so")
+except OSError:
+    CL = ctypes.CDLL("libOpenCL.so.1")
 V, U, I, S, L = ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_size_t, ctypes.c_ulonglong
 PI, PU = ctypes.POINTER(I), ctypes.POINTER(U)
 CL.clGetPlatformIDs.argtypes, CL.clGetPlatformIDs.restype = [U, V, PU], I
@@ -115,7 +130,8 @@ def run(device, context, M, N, K, RM, RN, KU, source, repeats=5, calls=40, batch
             raise RuntimeError(f"clCreateBuffer: {err.value}")
         return V(handle)
 
-    da, db, dc = buffer(A, READ_ONLY), buffer(B, READ_ONLY), buffer(C, WRITE_ONLY)
+    Bdev = pack_vnni(B) if PACKED else B
+    da, db, dc = buffer(A, READ_ONLY), buffer(Bdev, READ_ONLY), buffer(C, WRITE_ONLY)
     for index, handle in ((0, da), (1, db), (2, dc)):
         CL.clSetKernelArg(kernel, index, ctypes.sizeof(V), ctypes.byref(handle))
     for index, value in ((3, M), (4, N), (5, K)):
@@ -152,7 +168,8 @@ def readback(device, context, M, N, K, RM, RN, KU, source, batch=1):
         h = CL.clCreateBuffer(context, flags | COPY_HOST, array.nbytes, array.ctypes.data, ctypes.byref(err))
         return V(h)
 
-    da, db, dc = buffer(A, READ_ONLY), buffer(B, READ_ONLY), buffer(out, WRITE_ONLY)
+    Bdev = pack_vnni(B) if PACKED else B
+    da, db, dc = buffer(A, READ_ONLY), buffer(Bdev, READ_ONLY), buffer(out, WRITE_ONLY)
     for i, h in ((0, da), (1, db), (2, dc)):
         CL.clSetKernelArg(kernel, i, ctypes.sizeof(V), ctypes.byref(h))
     for i, v in ((3, M), (4, N), (5, K)):
@@ -179,7 +196,7 @@ def main():
     ap.add_argument("--check", action="store_true")
     args = ap.parse_args()
     M, N, K = (int(v) for v in args.shape.split(","))
-    source = pathlib.Path(__file__).with_name("opencl_gemm8.cl").read_text()
+    source = pathlib.Path(__file__).with_name(CL_SRC).read_text()
     device, context = device_and_context(args.device)
     print(f"  {M}x{N}x{K}, subgroup 8, DG2 8x8x16 DPAS, register-blocked (RM x RN atoms)")
     print(f"  Vulkan cooperative matrix on this card peaks at ~10800 GFLOP/s; XMX FP16 peak ~137000\n")
