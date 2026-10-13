@@ -73,17 +73,19 @@ BUILD_DIR = build_dir()
 
 
 # the compute runtime each backend is: the same `xmx_*` entry points, three libraries
-RUNTIMES = {"vulkan": "xmx", "metal": "metalmx", "d3d12": "d3dmx"}
+RUNTIMES = {"vulkan": "xmx", "metal": "metalmx", "d3d12": "d3dmx", "opencl": "openclmx"}
 
 
 def backend():
     """Which compute runtime the Python loads as `xmx`: `vulkan` (libxmx, the default
     everywhere), `metal` (libmetalmx, macOS only - the same entry points on Metal directly,
-    `NR_GPU_BACKEND=metal`) or `d3d12` (libd3dmx, Windows only - the same entry points on
-    Direct3D 12, `NR_GPU_BACKEND=d3d12`). Anything else is refused rather than guessed."""
+    `NR_GPU_BACKEND=metal`), `d3d12` (libd3dmx, Windows only - the same entry points on
+    Direct3D 12, `NR_GPU_BACKEND=d3d12`) or `opencl` (libopenclmx, Intel DG2 through IGC,
+    `docs/opencl-port.md`). Anything else is refused rather than guessed."""
     chosen = os.environ.get("NR_GPU_BACKEND", "vulkan").strip().lower() or "vulkan"
     if chosen not in RUNTIMES:
-        raise ValueError("NR_GPU_BACKEND must be 'vulkan', 'metal' or 'd3d12', not %r" % chosen)
+        raise ValueError("NR_GPU_BACKEND must be 'vulkan', 'metal', 'd3d12' or 'opencl', not %r"
+                         % chosen)
     if chosen == "metal" and sys.platform != "darwin":
         raise ValueError("NR_GPU_BACKEND=metal is macOS only; libmetalmx is built on Apple alone")
     if chosen == "d3d12" and sys.platform != "win32":

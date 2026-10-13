@@ -226,8 +226,10 @@ static int xmx_load(void)
 #else
         FAILF("NR_GPU_BACKEND=d3d12: libd3dmx exists on Windows only");
 #endif
+    } else if (backend && !strcmp(backend, "opencl")) {
+        runtime = "libopenclmx";           /* Intel DG2 through IGC: docs/opencl-port.md */
     } else if (backend && *backend && strcmp(backend, "vulkan")) {
-        FAILF("NR_GPU_BACKEND must be 'vulkan', 'metal' or 'd3d12', not '%s'", backend);
+        FAILF("NR_GPU_BACKEND must be 'vulkan', 'metal', 'd3d12' or 'opencl', not '%s'", backend);
     }
 
 #if defined(_WIN32) && __STDC_WANT_SECURE_LIB__
@@ -3324,6 +3326,7 @@ const char *nr_frame_runtime(void)
     const char *backend = getenv("NR_GPU_BACKEND");
     if (backend && !strcmp(backend, "metal")) return "metal";
     if (backend && !strcmp(backend, "d3d12")) return "d3d12";
+    if (backend && !strcmp(backend, "opencl")) return "opencl";
     return "vulkan";
 #endif
 }

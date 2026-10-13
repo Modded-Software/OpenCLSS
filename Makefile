@@ -135,6 +135,7 @@ else ifeq ($(LAYER32),1)
 LAYER32_TARGET := work/libnr_layer32$(SO)
 endif
 
+OPENCL_LIB ?= /usr/lib/x86_64-linux-gnu/libOpenCL.so.1
 all: work/libxmx$(SO) work/libnr_layer$(SO) $(LAYER32_TARGET) work/libnr_image$(SO) work/libnr_frame$(SO) work/nr_frame work/nr_frame_rates work/gemm_runner work/half_probe.spv $(SHADERS) $(PLATFORM_EXTRA)
 
 work:
@@ -145,6 +146,11 @@ work/libnr_image$(SO) work/test_exchange work/test_settled work/libnr_layer32$(S
 
 work/libxmx$(SO): src/gpu/libxmx.c
 	$(CC) $(CFLAGS) -shared -o $@ $< $(XMX_LIBS)
+
+# The OpenCL runtime (NR_GPU_BACKEND=opencl). Debian ships only the versioned loader, so it
+# links libOpenCL.so.1 by path. Not in `all`: scripts/dg2-build.sh builds it on DG2.
+work/libopenclmx$(SO): src/gpu/libopenclmx.c | work
+	$(CC) $(CFLAGS) -shared -o $@ $< $(OPENCL_LIB) -lm
 
 # The one-shot runner behind src/gpu/test_gemm.py: its own instance and device per call.
 work/gemm_runner: src/gpu/gemm_runner.c | work

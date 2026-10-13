@@ -70,6 +70,7 @@ extern cl_int clEnqueueWriteBuffer(cl_command_queue, cl_mem, cl_int, size_t, siz
 extern cl_int clEnqueueFillBuffer(cl_command_queue, cl_mem, const void *, size_t, size_t, size_t, cl_uint, const void *, void *);
 extern cl_int clReleaseMemObject(cl_mem);
 extern cl_int clFinish(cl_command_queue);
+extern cl_int clReleaseCommandQueue(cl_command_queue);
 extern cl_int clFlush(cl_command_queue);
 extern cl_int clGetEventProfilingInfo(cl_event, cl_uint, size_t, void *, size_t *);
 extern cl_int clReleaseEvent(cl_event);
@@ -114,30 +115,210 @@ static const char *GEMM_SRC =
 "#pragma unroll\n"
 "    for (unsigned r = 0; r < RM; r++)\n"
 "#pragma unroll\n"
-"        for (unsigned c = 0; c < RN; c++) acc[r][c] = (float8)(0.0f);\n"
+"        for (unsigned c = 0; c < RN; c++)\n"
+"            acc[r][c] = (float8)(0.0f);\n"
+"#ifndef GEMM_DPAS\n"
+"    /* A plain half->float FMA core, no DPAS intrinsic - the default. The matrix intrinsic\n"
+"     * is correct in the ISA but the optimiser miscompiles one accumulator atom of it on\n"
+"     * this IGC, run to run, on the frame's batched QK shapes; -cl-opt-disable hides it at\n"
+"     * 6.6x the time, and this core is the deterministic path. -DGEMM_DPAS selects the\n"
+"     * intrinsic (notes/AUDIT-opencl-defects.md). k is stepped two at a time and A read as\n"
+"     * half2: the kernel is load-bound, and this halves the A load instructions. */\n"
+"    /* K-blocked 8; A read as two half4 a row (the loop is load-bound, and this is where\n"
+"     * the register budget peaks before the accumulators spill - 16 was slower). */\n"
+"    for (unsigned k = 0; k < K; k += 8) {\n"
+"        float a0[RM][8], a1[RM][8], a2[RM][8], a3[RM][8];\n"
+"        float a4[RM][8], a5[RM][8], a6[RM][8], a7[RM][8];\n"
+"#pragma unroll\n"
+"        for (unsigned r = 0; r < RM; r++)\n"
+"#pragma unroll\n"
+"            for (unsigned i = 0; i < 8; i++) {\n"
+"                float4 lo = vload_half4(0, A + (size_t)(row + r * 8 + i) * lda + k);\n"
+"                float4 hi = vload_half4(0, A + (size_t)(row + r * 8 + i) * lda + k + 4);\n"
+"                a0[r][i] = lo.s0; a1[r][i] = lo.s1; a2[r][i] = lo.s2; a3[r][i] = lo.s3;\n"
+"                a4[r][i] = hi.s0; a5[r][i] = hi.s1; a6[r][i] = hi.s2; a7[r][i] = hi.s3;\n"
+"            }\n"
+"#pragma unroll\n"
+"        for (unsigned c = 0; c < RN; c++) {\n"
+"            unsigned bcol = col + c * 8 + lane;\n"
+"            float b0, b1, b2, b3, b4, b5, b6, b7;\n"
+"            if (transposed) {\n"
+"                float4 lo = vload_half4(0, B + (size_t)bcol * ldb + k);\n"
+"                float4 hi = vload_half4(0, B + (size_t)bcol * ldb + k + 4);\n"
+"                b0 = lo.s0; b1 = lo.s1; b2 = lo.s2; b3 = lo.s3;\n"
+"                b4 = hi.s0; b5 = hi.s1; b6 = hi.s2; b7 = hi.s3;\n"
+"            } else {\n"
+"                b0 = (float)B[(size_t)(k + 0) * ldb + bcol];\n"
+"                b1 = (float)B[(size_t)(k + 1) * ldb + bcol];\n"
+"                b2 = (float)B[(size_t)(k + 2) * ldb + bcol];\n"
+"                b3 = (float)B[(size_t)(k + 3) * ldb + bcol];\n"
+"                b4 = (float)B[(size_t)(k + 4) * ldb + bcol];\n"
+"                b5 = (float)B[(size_t)(k + 5) * ldb + bcol];\n"
+"                b6 = (float)B[(size_t)(k + 6) * ldb + bcol];\n"
+"                b7 = (float)B[(size_t)(k + 7) * ldb + bcol];\n"
+"            }\n"
+"#pragma unroll\n"
+"            for (unsigned r = 0; r < RM; r++)\n"
+"#pragma unroll\n"
+"                for (unsigned i = 0; i < 8; i++)\n"
+"                    acc[r][c][i] += a0[r][i] * b0 + a1[r][i] * b1\n"
+"                                  + a2[r][i] * b2 + a3[r][i] * b3\n"
+"                                  + a4[r][i] * b4 + a5[r][i] * b5\n"
+"                                  + a6[r][i] * b6 + a7[r][i] * b7;\n"
+"        }\n"
+"    }\n"
+"#else\n"
+"    /* the operands as raw 16-bit words, packed by integer ops (the same bits the\n"
+"     * half2 bitcast would carry) */\n"
+"    __global const ushort *Au = (__global const ushort *)A, *Bu = (__global const ushort *)B;\n"
 "    for (unsigned k = 0; k < K; k += 16) {\n"
 "        int8 a[RM], b[RN];\n"
 "#pragma unroll\n"
 "        for (unsigned r = 0; r < RM; r++) {\n"
 "            int8 t;\n"
 "#pragma unroll\n"
-"            for (unsigned i = 0; i < 8; i++)\n"
-"                t[i] = as_int((half2)(A[(row + r * 8 + i) * lda + k + 2 * lane],\n"
-"                                      A[(row + r * 8 + i) * lda + k + 2 * lane + 1]));\n"
+"            for (unsigned i = 0; i < 8; i++) {\n"
+"                size_t at = (size_t)(row + r * 8 + i) * lda + k + 2 * lane;\n"
+"                t[i] = (int)((uint)Au[at] | ((uint)Au[at + 1] << 16));\n"
+"            }\n"
 "            a[r] = t;\n"
 "        }\n"
 "#pragma unroll\n"
 "        for (unsigned c = 0; c < RN; c++) {\n"
 "            int8 t;\n"
 "#pragma unroll\n"
-"            for (unsigned i = 0; i < 8; i++)\n"
-"                t[i] = transposed\n"
-"                    ? as_int((half2)(B[(col + c * 8 + lane) * ldb + k + 2 * i],\n"
-"                                     B[(col + c * 8 + lane) * ldb + k + 2 * i + 1]))\n"
-"                    : as_int((half2)(B[(k + 2 * i) * ldb + col + c * 8 + lane],\n"
-"                                     B[(k + 2 * i + 1) * ldb + col + c * 8 + lane]));\n"
+"            for (unsigned i = 0; i < 8; i++) {\n"
+"                uint lo, hi;\n"
+"                if (transposed) {\n"
+"                    size_t at = (size_t)(col + c * 8 + lane) * ldb + k + 2 * i;\n"
+"                    lo = Bu[at]; hi = Bu[at + 1];\n"
+"                } else {\n"
+"                    lo = Bu[(size_t)(k + 2 * i) * ldb + col + c * 8 + lane];\n"
+"                    hi = Bu[(size_t)(k + 2 * i + 1) * ldb + col + c * 8 + lane];\n"
+"                }\n"
+"                t[i] = (int)(lo | (hi << 16));\n"
+"            }\n"
 "            b[c] = t;\n"
 "        }\n"
+"#pragma unroll\n"
+"        for (unsigned r = 0; r < RM; r++)\n"
+"#pragma unroll\n"
+"            for (unsigned c = 0; c < RN; c++)\n"
+"                acc[r][c] = intel_sub_group_f16_f16_matrix_mad_k16(a[r], b[c], acc[r][c]);\n"
+"    }\n"
+"#endif\n"
+"#pragma unroll\n"
+"    for (unsigned r = 0; r < RM; r++)\n"
+"#pragma unroll\n"
+"        for (unsigned c = 0; c < RN; c++)\n"
+"#pragma unroll\n"
+"            for (unsigned i = 0; i < 8; i++) {\n"
+"                unsigned row_i = row + r * 8 + i;\n"
+"                unsigned cos_i = col + c * 8 + lane;\n"
+"                unsigned at = row_i * ldc + cos_i;\n"
+"                int ok = 1;\n"
+"                if (window_res) {\n"
+"                    unsigned token = row_i & 63u, window = row_i >> 6;\n"
+"                    unsigned y = (window / win_across) * 8u + (token >> 3);\n"
+"                    unsigned x = (window % win_across) * 8u + (token & 7u);\n"
+"                    unsigned top = win_pad >> 16, left = win_pad & 0xffffu;\n"
+"                    if (y < top || x < left || y - top >= win_h || x - left >= win_w)\n"
+"                        ok = 0;\n"
+"                    else at = ((y - top) * win_w + (x - left)) * N + cos_i;\n"
+"                }\n"
+"                float v = acc[r][c][i];\n"
+"                if (residual && ok) v += (skip_half ? (float)Sk[at] : Sf[at]) * Cos[cos_i];\n"
+"                v = publish_epi(epilogue, v);\n"
+"                if (ok) {\n"
+"                    if (compact) { if (cos_i < 4) C[at] = v; }\n"
+"                    else if (narrow) Ch[at] = (half)v;\n"
+"                    else C[at] = v;\n"
+"                }\n"
+"            }\n"
+"}\n";
+
+/* ---- the block-read GEMM and its B packing (P1, from src/bench/opencl_gemm8_blk.cl) --- */
+/* OFF by default (XMX_CL_BLK=1 turns it on). Wired in and passing the isolated GEMM,
+ * residual, epilogue and determinism tests, but in the frame it is not yet exact: with the
+ * epilogues enabled test_input_fp16.py diverges between the single- and block-schedules, and
+ * even restricted to plain GEMMs (bt==0) it makes test_compact_head.py fail about one run in
+ * three where the scalar kernel is 3/3 - the same IGC DPAS nondeterminism the RM=2 scalar
+ * build shows, now in the block-read form. The RM=1 scalar kernel stays the default until
+ * this is exact; see the diary, Run 30. */
+/* B is pre-packed into the VNNI fragments the DPAS B operand wants, so one
+ * intel_sub_group_block_read8 fetches a whole 16x8 atom where the scalar kernel spent 16
+ * gathers. A stays row-major and is read one intel_sub_group_block_read a row. Fragments
+ * are one uint each: even k in the low half, so lane l holds (B[k0+2i][n0+l],
+ * B[k0+2i+1][n0+l]). */
+static const char *PACK_SRC =
+"__attribute__((intel_reqd_sub_group_size(8)))\n"
+"__kernel void pack(__global const ushort *B, __global uint *Bp,\n"
+"                   unsigned K, unsigned N, unsigned ldb, unsigned sb)\n"
+"{\n"
+"    unsigned gtile = get_global_id(0);\n"
+"    unsigned ntiles = N / 8u, ktiles = K / 16u;\n"
+"    unsigned bt = gtile / (ktiles * ntiles), rem = gtile % (ktiles * ntiles);\n"
+"    unsigned kt = rem / ntiles, nt = rem % ntiles;\n"
+"    __global const ushort *Bbt = B + (size_t)bt * sb;\n"
+"    __global uint *out = Bp + ((size_t)bt * ktiles * ntiles + (size_t)kt * ntiles + nt) * 64u;\n"
+"    unsigned k0 = kt * 16u, n0 = nt * 8u;\n"
+"    for (unsigned i = 0; i < 8; i++)\n"
+"        for (unsigned l = 0; l < 8; l++) {\n"
+"            unsigned lo = Bbt[(size_t)(k0 + 2 * i) * ldb + n0 + l];\n"
+"            unsigned hi = Bbt[(size_t)(k0 + 2 * i + 1) * ldb + n0 + l];\n"
+"            out[i * 8u + l] = lo | (hi << 16);\n"
+"        }\n"
+"}\n";
+
+/* The same rows, epilogues and strides as GEMM_SRC, but A and the packed B read by block.
+ * Routing (run_gemm) only sends a dense, untransposed B here; A's row stride must be even,
+ * which dense K (a multiple of 16) makes so. RM x RN atoms a workgroup. */
+static const char *GEMM_BLK_SRC =
+"#pragma OPENCL EXTENSION cl_khr_fp16 : enable\n"
+"#pragma OPENCL EXTENSION cl_intel_subgroups : enable\n"
+"#pragma OPENCL EXTENSION cl_intel_subgroup_matrix_multiply_accumulate : enable\n"
+"#ifndef RM\n#define RM 1\n#endif\n"
+"#ifndef RN\n#define RN 1\n#endif\n"
+"__attribute__((intel_reqd_sub_group_size(8)))\n"
+"__kernel void gemm(__global const half *A, __global const uint *Bp, __global float *C,\n"
+"                   __global const half *Sk, __global const float *Sf,\n"
+"                   __global const float *Cos,\n"
+"                   unsigned M, unsigned N, unsigned K,\n"
+"                   unsigned lda, unsigned ldb, unsigned ldc,\n"
+"                   unsigned oa, unsigned ob, unsigned oc,\n"
+"                   unsigned sa, unsigned sb, unsigned sc, unsigned transposed,\n"
+"                   unsigned epilogue, unsigned narrow, unsigned compact,\n"
+"                   unsigned residual, unsigned skip_half,\n"
+"                   unsigned window_res, unsigned win_h, unsigned win_w,\n"
+"                   unsigned win_across, unsigned win_pad)\n"
+"{\n"
+"    unsigned lane = get_sub_group_local_id();\n"
+"    __global half *Ch = (__global half *)C;\n"
+"    unsigned row = get_group_id(1) * (8 * RM);\n"
+"    unsigned col = get_group_id(0) * (8 * RN);\n"
+"    size_t bt = get_group_id(2);\n"
+"    A += oa + bt * (size_t)sa;\n"
+"    __global const uint *A32 = (__global const uint *)A;\n"
+"    unsigned ntiles = N / 8u;\n"
+"    Bp += bt * (size_t)(K * N / 2u);\n"
+"    C += oc + bt * (size_t)sc; Ch += oc + bt * (size_t)sc;\n"
+"    float8 acc[RM][RN];\n"
+"#pragma unroll\n"
+"    for (unsigned r = 0; r < RM; r++)\n"
+"#pragma unroll\n"
+"        for (unsigned c = 0; c < RN; c++) acc[r][c] = (float8)(0.0f);\n"
+"    for (unsigned k = 0; k < K; k += 16) {\n"
+"        int8 a[RM], b[RN];\n"
+"#pragma unroll\n"
+"        for (unsigned r = 0; r < RM; r++)\n"
+"#pragma unroll\n"
+"            for (unsigned i = 0; i < 8; i++)\n"
+"                a[r][i] = as_int(intel_sub_group_block_read(\n"
+"                    A32 + ((size_t)(row + r * 8 + i) * lda + k) / 2));\n"
+"#pragma unroll\n"
+"        for (unsigned c = 0; c < RN; c++)\n"
+"            b[c] = as_int8(intel_sub_group_block_read8(\n"
+"                Bp + ((size_t)(k / 16) * ntiles + col / 8 + c) * 64));\n"
 "#pragma unroll\n"
 "        for (unsigned r = 0; r < RM; r++)\n"
 "#pragma unroll\n"
@@ -148,7 +329,6 @@ static const char *GEMM_SRC =
 "    for (unsigned r = 0; r < RM; r++)\n"
 "#pragma unroll\n"
 "        for (unsigned c = 0; c < RN; c++)\n"
-"#pragma unroll\n"
 "            for (unsigned i = 0; i < 8; i++) {\n"
 "                unsigned row_i = row + r * 8 + i;\n"
 "                unsigned cos_i = col + c * 8 + lane;\n"
@@ -320,10 +500,10 @@ static const char *GEMM_SRC =
 "        float v2 = ahalf ? (float)Ah[taps[2]] : A[taps[2]];\n" \
 "        float v3 = ahalf ? (float)Ah[taps[3]] : A[taps[3]];\n" \
 "        float total = (v0 + v1) + v2 + v3;\n" \
-"        C[index] = publish_epi(epilogue, total * 0.25f);\n" \
 "        Sh[taps[0]] = (half)e4m3(v0); Sh[taps[1]] = (half)e4m3(v1);\n" \
 "        Sh[taps[2]] = (half)e4m3(v2); Sh[taps[3]] = (half)e4m3(v3);\n" \
-"        return;\n" \
+"        /* through `store`: the pooled output is half (flag 0x1000) in the frame */\n" \
+"        value = total * 0.25f; goto store;\n" \
 "    }\n" \
 "    case UPSAMPLE_ADD: {\n" \
 "        uint target = sa, source = sb; c = index % n; rest = index / n;\n" \
@@ -331,9 +511,8 @@ static const char *GEMM_SRC =
 "        uint at = ((y / 2u) * source + (x / 2u)) * n + c;\n" \
 "        float scaled = (bhalf ? (float)Bh[index] : B[index]) * D[c];\n" \
 "        float merged = (ahalf ? (float)Ah[at] : A[at]) + scaled;\n" \
-"        C[index] = publish_epi(epilogue, merged);\n" \
 "        if (S != (__global float *)0) Sh[index] = (half)e4m3(merged);\n" \
-"        return;\n" \
+"        value = merged; goto store;   /* honours the half output, as resident.comp */\n" \
 "    }\n" \
 "    case PAD_END: {\n" \
 "        uint height = sa, width = sb, padded = sc; c = index % n; rest = index / n;\n" \
@@ -535,6 +714,7 @@ static const char *GEMM_SRC =
 #define K_UNARY 2
 #define K_UNARY2 3
 #define K_ROW 4
+#define K_COMPOSED 5
 
 struct buffer {
 	int used;
@@ -542,6 +722,14 @@ struct buffer {
 	cl_mem mem;
 	unsigned long long bytes;
 	int kind;                   /* GRAPH=0 (device-local, unmapped), HOST_READ/WRITE != 0 */
+	int internal;               /* the composed passes' own scratch, not the model's */
+	/* VNNI-packed copy of this buffer as a GEMM's B operand, and the generation it was
+	 * packed at. `gen` bumps whenever the buffer is written (host upload or a command),
+	 * so a weight packs once and an activation-B repacks when it changes. */
+	cl_mem packed;              /* NULL until first use as a packed B */
+	unsigned long long gen;     /* bumped whenever the buffer is written */
+	unsigned long long packed_gen;   /* the gen the packed copy was made at */
+	unsigned packed_K, packed_N, packed_stride, packed_batch;
 };
 
 struct cmd {
@@ -553,7 +741,17 @@ struct cmd {
 	unsigned height, across, pad, flags;
 	unsigned long long bytes, so, to;
 	float cap;
+	int stamp;                   /* profile kind, family * 32 + subkind (libxmx's numbering) */
+	struct cmd *parts;           /* a composed op's lowered commands (K_COMPOSED) */
+	int nparts;
 };
+static struct cmd *new_cmd(int kind);
+static void free_parts(struct cmd *list, int n);
+/* The descriptor path's three operands: host shadows the caller writes through
+ * (`xmx_reserve*` returns them) mirrored to device buffers, as libxmx's A/B/C are. */
+static void *g_ra, *g_rb, *g_rc;
+static int g_ria = -1, g_rib = -1, g_ric = -1;
+static unsigned long long g_rasz, g_rbsz, g_rcsz;
 
 static struct {
 	int open;
@@ -563,6 +761,8 @@ static struct {
 	cl_program prog;
 	cl_kernel gemm;
 	cl_kernel gemm_small;       /* RM=1: one 8-row tile, for M that is not a multiple of 16 */
+	cl_kernel gemm_blk;         /* block-read A + VNNI-packed B (P1) */
+	cl_kernel pack;             /* B -> VNNI fragments for gemm_blk */
 	cl_kernel resident;
 	cl_kernel row;
 	int rm, rn;
@@ -576,16 +776,36 @@ static struct {
 	unsigned long long total;
 	char *spv_cache;            /* xmx_reserve hands back device addresses; see below */
 	int time;                   /* XMX_TIME: collect per-dispatch profiling events */
+	int qprof;                  /* the command queue carries CL_QUEUE_PROFILING_ENABLE */
+	int prof;                   /* xmx_profile(1): fill the per-kind table from the events */
 	unsigned long long dev_ns;  /* summed device time of the last execute() */
 	int dev_cmds;               /* dispatches profiled in the last execute() */
 } g;
 
-static struct { cl_event ev; int tag; } *g_trace;
+static struct { cl_event ev; int tag; int kind; int group; } *g_trace;
 static int g_ntrace;
+static int g_top_stamp;    /* the profile kind of the top-level command being executed */
+static int g_group;        /* which top-level command a pushed event belongs to */
+
+/* The profile table, the same shape and kind numbering as libxmx: a kind is
+ * `family * 32 + subkind`, families PK_GEMM/TILED/STAGED/UNARY/ROW/HISTORY/COPY. */
+enum { PK_GEMM = 0, PK_TILED, PK_STAGED, PK_UNARY, PK_ROW, PK_HISTORY, PK_COPY, PK_START = 7 };
+#define PROF_KINDS (PK_START * 32)
+#define PROF_EACH_MAX 8192
+#define PK(f, s) ((f) * 32 + (s))
+static double prof_ms[PROF_KINDS];
+static unsigned prof_hits[PROF_KINDS];
+static int prof_each_n;
+static double prof_each[PROF_EACH_MAX];
+static unsigned prof_each_kind[PROF_EACH_MAX];
+
+static int profiling(void) { return g.time || g.prof; }
 
 static void trace_reset(void)
 {
-	if (!g.time)
+	g_group = 0;
+	g_top_stamp = 0;
+	if (!profiling())
 		return;
 	for (int i = 0; i < g_ntrace; i++)
 		clReleaseEvent(g_trace[i].ev);
@@ -594,17 +814,56 @@ static void trace_reset(void)
 
 static void trace_push(cl_event ev, int tag)
 {
-	if (g.time && ev) {
+	if (profiling() && ev) {
 		g_trace[g_ntrace].ev = ev;
 		g_trace[g_ntrace].tag = tag;
+		g_trace[g_ntrace].kind = g_top_stamp;
+		g_trace[g_ntrace].group = g_group;
 		g_ntrace++;
+	}
+}
+
+/* One recorded pass per `xmx_rec_*` call, as libxmx reports, not one per kernel this
+ * backend lowers a composed op into: the events of one top-level command are summed into
+ * a single entry carrying that command's kind, so the per-pass table and the recorded
+ * labels line up. */
+static void collect_profile(void)
+{
+	int i = 0;
+	while (i < g_ntrace) {
+		int group = g_trace[i].group, kind = g_trace[i].kind;
+		double ms = 0.0;
+		int any = 0;
+		while (i < g_ntrace && g_trace[i].group == group) {
+			cl_ulong s = 0, e = 0;
+			if (clGetEventProfilingInfo(g_trace[i].ev, CL_PROFILING_COMMAND_START,
+						    sizeof s, &s, NULL) == CL_SUCCESS
+			    && clGetEventProfilingInfo(g_trace[i].ev, CL_PROFILING_COMMAND_END,
+						       sizeof e, &e, NULL) == CL_SUCCESS && e > s) {
+				ms += (double)(e - s) * 1e-6;
+				any = 1;
+			}
+			i++;
+		}
+		if (!any || kind < 0 || kind >= PROF_KINDS)
+			continue;
+		if (prof_each_n < PROF_EACH_MAX) {
+			prof_each_kind[prof_each_n] = (unsigned)kind;
+			prof_each[prof_each_n++] = ms;
+		}
+		prof_ms[kind] += ms;
+		prof_hits[kind]++;
 	}
 }
 
 static void trace_sum(void)
 {
-	if (!g.time)
+	if (g.prof)
+		collect_profile();
+	if (!g.time) {
+		trace_reset();
 		return;
+	}
 	g.dev_ns = 0;
 	g.dev_cmds = g_ntrace;
 	int verbose = getenv("XMX_TIME_VERBOSE") != NULL;
@@ -652,7 +911,10 @@ int xmx_discrete(void) { return 1; }
 int xmx_preserve16(void) { return 1; }
 int xmx_half_by_cast(void) { return 1; }
 int xmx_staged_packed(void) { return 1; }
-int xmx_portable_packed(void) { return 0; }
+/* ponytail: one A loader here, so XMX_PORTABLE_PACKED is echoed but selects nothing;
+ * test_staged_packed then checks the two modes byte-identical. Make it real if a packed
+ * loader variant is added. */
+int xmx_portable_packed(void) { const char *e = getenv("XMX_PORTABLE_PACKED"); return e && atoi(e); }
 int xmx_adopted(void) { return 0; }
 int xmx_coopmat(void) { return 1; }
 int xmx_portable(void) { return 0; }
@@ -673,7 +935,10 @@ static cl_kernel build_kernel(const char *src, const char *opts, const char *nam
 	cl_program prog = clCreateProgramWithSource(g.ctx, 1, list, NULL, &err);
 	if (err != CL_SUCCESS)
 		return NULL;
-	if (clBuildProgram(prog, 1, &g.dev, opts, NULL, NULL) != CL_SUCCESS) {
+	/* XMX_CL_OPTS is appended to every build: a diagnostic for compiler faults */
+	char all[512];
+	snprintf(all, sizeof all, "%s %s", opts ? opts : "", getenv("XMX_CL_OPTS") ? getenv("XMX_CL_OPTS") : "");
+	if (clBuildProgram(prog, 1, &g.dev, all, NULL, NULL) != CL_SUCCESS) {
 		size_t n = 0;
 		char log[8192];
 		clGetProgramBuildInfo(prog, g.dev, 0x1183 /*CL_PROGRAM_BUILD_LOG*/, sizeof log, log, &n);
@@ -702,7 +967,8 @@ int xmx_open(void)
 	if (!g.ctx)
 		return fail("clCreateContext: %d", err);
 	g.time = getenv("XMX_TIME") != NULL;
-	g.q = clCreateCommandQueue(g.ctx, g.dev, g.time ? CL_QUEUE_PROFILING_ENABLE : 0, &err);
+	g.qprof = g.time;
+	g.q = clCreateCommandQueue(g.ctx, g.dev, g.qprof ? CL_QUEUE_PROFILING_ENABLE : 0, &err);
 	if (!g.q)
 		return fail("clCreateCommandQueue: %d", err);
 	if (g.time)
@@ -720,12 +986,37 @@ int xmx_open(void)
 			FILE *f = fopen(getenv("XMX_DUMP_SRC"), "w");
 			if (f) { fputs(src, f); fclose(f); }
 		}
-		g.gemm = build_kernel(src, NULL, "gemm");
-		g.gemm_small = build_kernel(src, "-D RM=1", "gemm");
+		/* Built optimised, the same as HEAD. A run-to-run difference here is a memory
+		 * bug, not the compiler: every buffer is cleared at creation (see
+		 * xmx_buf_create_kind). XMX_CL_GEMM_OPTS overrides the flags for diagnosis. */
+		const char *gx = getenv("XMX_CL_GEMM_OPTS") ? getenv("XMX_CL_GEMM_OPTS") : "";
+		char o2[256], o1[256];
+		snprintf(o2, sizeof o2, "-D RN=%d %s", g.rn, gx);
+		snprintf(o1, sizeof o1, "-D RM=1 -D RN=%d %s", g.rn, gx);
+		g.gemm = build_kernel(src, o2, "gemm");
+		g.gemm_small = build_kernel(src, o1, "gemm");
 		free(src);
 	}
 	if (!g.gemm)
 		return -1;
+	/* The block-read GEMM and its packer. P1's fast path; the packer is authoritative only
+	 * when the buffers it names allow it (run_gemm's guards). XMX_CL_GEMM_OPTS overrides
+	 * the flags for diagnosis. */
+	if (getenv("XMX_CL_BLK")) {
+		size_t n = strlen(CL_COMMON) + strlen(GEMM_BLK_SRC) + 1;
+		char *blk = malloc(n), *pk = malloc(strlen(CL_COMMON) + strlen(PACK_SRC) + 1);
+		if (!blk || !pk)
+			return -1;
+		snprintf(blk, n, "%s%s", CL_COMMON, GEMM_BLK_SRC);
+		snprintf(pk, strlen(CL_COMMON) + strlen(PACK_SRC) + 1, "%s%s", CL_COMMON, PACK_SRC);
+		const char *bx = getenv("XMX_CL_GEMM_OPTS") ? getenv("XMX_CL_GEMM_OPTS") : "";
+		g.gemm_blk = build_kernel(blk, bx, "gemm");
+		g.pack = build_kernel(pk, NULL, "pack");
+		free(blk);
+		free(pk);
+		if (g.gemm_blk && g.pack)
+			g.error[0] = 0;   /* build_kernel's failure is not fatal: the scalar path stays */
+	}
 	g.resident = build_kernel(RESIDENT_SRC, NULL, "resident");
 	if (!g.resident)
 		return -1;
@@ -737,8 +1028,27 @@ int xmx_open(void)
 	return 0;
 }
 
+int xmx_buf_destroy(int id);
+int xmx_graph_destroy(int id);
+static void scratch_reset(void);
+static void collect_scratch(void);
+
+/* As libxmx's: every graph and buffer released, so a reopen starts clean and nothing the
+ * device holds outlives the context's user. */
 void xmx_close(void)
 {
+	if (!g.open)
+		return;
+	for (int i = 0; i < MAX_GRAPHS; i++)
+		xmx_graph_destroy(i);
+	for (int i = 0; i < MAX_BUF; i++)
+		xmx_buf_destroy(i);
+	free(g_ra); g_ra = NULL; g_ria = -1; g_rasz = 0;
+	free(g_rb); g_rb = NULL; g_rib = -1; g_rbsz = 0;
+	free(g_rc); g_rc = NULL; g_ric = -1; g_rcsz = 0;
+	free_parts(g.cmd, g.ncmd);
+	scratch_reset();
+	g.ncmd = 0;
 	g.open = 0;
 }
 
@@ -807,8 +1117,13 @@ int xmx_buf_create_kind(unsigned long long bytes, int kind)
 		g.buf[i].mem = mem;
 		g.buf[i].bytes = bytes;
 		g.buf[i].kind = kind;
-		g.total += bytes;
-		if (kind != 0 && fill_device(i)) {
+		g.buf[i].internal = 0;
+		/* Clear the device buffer for every kind: a kernel that reads a pad a previous
+		 * pass never wrote (a tail, a masked row) otherwise carries whatever the driver's
+		 * fresh allocation held, which is not the same twice, and shows up as a pass that
+		 * differs run to run (`test_determinism.py`). This is the same reason
+		 * `nr_resident.py` zeroes its scratch. */
+		if (fill_device(i)) {
 			g.buf[i].used = 0;
 			clReleaseMemObject(mem);
 			free(host);
@@ -824,7 +1139,18 @@ int xmx_buf_create(unsigned long long bytes) { return xmx_buf_create_kind(bytes,
 int xmx_buf_host_visible(int id) { struct buffer *b = slot(id); return (b && b->host) ? 1 : 0; }
 void *xmx_buf_ptr(int id) { struct buffer *b = slot(id); return b ? b->host : NULL; }
 unsigned long long xmx_buf_bytes(int id) { struct buffer *b = slot(id); return b ? b->bytes : 0; }
-unsigned long long xmx_buf_total_bytes(void) { return g.total; }
+/* The model's live resident buffers, as libd3dmx counts them: summed from the table, so a
+ * destroy is counted (a running total that only grew made every close look like a leak).
+ * The composed passes' scratch is the backend's own, like a driver allocation, and is
+ * left out - the fused kernels that replace them (P3) have none. */
+unsigned long long xmx_buf_total_bytes(void)
+{
+	unsigned long long total = 0;
+	for (int i = 0; i < MAX_BUF; i++)
+		if (g.buf[i].used && !g.buf[i].internal)
+			total += g.buf[i].bytes;
+	return total;
+}
 
 int xmx_buf_zero(int id)
 {
@@ -833,6 +1159,7 @@ int xmx_buf_zero(int id)
 		return fail("bad buffer %d", id);
 	if (b->host)
 		memset(b->host, 0, b->bytes);
+	b->gen++;
 	/* Clear the device now, on the queue, before the commands that will use it: the scratch
 	 * arena clears roles in the middle of a recording, so "now" is the only correct time. */
 	return fill_device(id);
@@ -850,6 +1177,7 @@ int xmx_buf_upload(int id, const void *src, unsigned long long off, unsigned lon
 	if (clEnqueueWriteBuffer(g.q, b->mem, CL_TRUE, (size_t)off, (size_t)bytes, src, 0, NULL, NULL)
 	    != CL_SUCCESS)
 		return fail("clEnqueueWriteBuffer: %d", -1);
+	b->gen++;
 	return 0;
 }
 
@@ -880,14 +1208,16 @@ int xmx_buf_destroy(int id)
 		return 0;
 	if (b->mem)
 		clReleaseMemObject(b->mem);
+	if (b->packed)
+		clReleaseMemObject(b->packed);
 	free(b->host);
 	memset(b, 0, sizeof *b);
 	return 0;
 }
 
 /* ---- recording -------------------------------------------------------------------- */
-int xmx_begin(void) { g.ncmd = 0; return 0; }
-int xmx_abort(void) { g.ncmd = 0; return 0; }
+int xmx_begin(void) { free_parts(g.cmd, g.ncmd); g.ncmd = 0; return 0; }
+int xmx_abort(void) { free_parts(g.cmd, g.ncmd); g.ncmd = 0; return 0; }
 int xmx_sync(int on) { (void)on; return 0; }
 
 int xmx_rec_copy(int source, int target, unsigned long long bytes,
@@ -895,11 +1225,71 @@ int xmx_rec_copy(int source, int target, unsigned long long bytes,
 {
 	if (!slot(source) || !slot(target))
 		return fail("copy: bad buffer");
+	unsigned long long as = slot(source)->bytes, bs = slot(target)->bytes;
+	if (!bytes || ((bytes | so | to) & 3) || so > as || bytes > as - so || to > bs || bytes > bs - to)
+		return fail("copy range must be aligned and within both buffers");
+	if (source == target && so < to + bytes && to < so + bytes)
+		return fail("overlapping copy");
 	if (g.ncmd >= MAX_CMD)
 		return fail("command list full");
-	struct cmd *c = &g.cmd[g.ncmd++];
+	struct cmd *c = new_cmd(0);
 	c->kind = K_COPY;
 	c->a = source; c->c = target; c->bytes = bytes; c->so = so; c->to = to;
+	c->stamp = PK_COPY * 32;
+	return 0;
+}
+
+/* Every recorded command starts cleared. The list's slots are reused submit after
+ * submit, and a recorder that sets only its own fields otherwise inherits the last
+ * command's: gemm_residual ran with a stale ldc=128 at N=256, overlapping rows raced,
+ * and the frame differed run to run from encoder L4 on (scripts/opencl-trace.sh). */
+static struct cmd *new_cmd(int kind)
+{
+	struct cmd *c = g.cmd + g.ncmd;
+	g.ncmd++;
+	memset(c, 0, sizeof *c);
+	c->kind = kind;
+	c->d = -1;
+	c->second = -1;
+	return c;
+}
+
+/* A composed op's lowered commands hang off their K_COMPOSED command; they are freed when
+ * the recording is submitted, aborted, or its graph destroyed. */
+static void free_parts(struct cmd *list, int n)
+{
+	for (int i = 0; i < n; i++) {
+		if (!list[i].parts)
+			continue;
+		free_parts(list[i].parts, list[i].nparts);
+		free(list[i].parts);
+		list[i].parts = NULL;
+		list[i].nparts = 0;
+	}
+}
+
+/* Fold the commands recorded since `base` into one composed op: the graph sees one, the
+ * executor lowers it into all of them, so the recorded op stream stays the graph's. The
+ * one recorded op carries one profile kind (`stamp`), so the per-pass table shows the
+ * fused pass libxmx reports, not the several kernels this backend lowers it into. */
+static int wrap_composed(int base, int stamp)
+{
+	int n = g.ncmd - base;
+	if (n <= 0)
+		return 0;
+	if (n == 1) {                            /* nothing to fold: stamp the one command */
+		g.cmd[base].stamp = stamp;
+		return 0;
+	}
+	struct cmd *parts = malloc(sizeof(struct cmd) * (size_t)n);
+	if (!parts)
+		return fail("compose out of memory");
+	memcpy(parts, &g.cmd[base], sizeof(struct cmd) * (size_t)n);
+	g.ncmd = base;
+	struct cmd *c = new_cmd(K_COMPOSED);
+	c->parts = parts;
+	c->nparts = n;
+	c->stamp = stamp;
 	return 0;
 }
 
@@ -914,23 +1304,66 @@ int xmx_rec_gemm(int a, int b, int c, unsigned M, unsigned N, unsigned K, unsign
 			    8, 8 * g.rn);
 	if (g.ncmd >= MAX_CMD)
 		return fail("command list full");
-	struct cmd *cm = &g.cmd[g.ncmd++];
+	struct cmd *cm = new_cmd(0);
 	cm->kind = K_GEMM;
 	cm->a = a; cm->b = b; cm->c = c;
 	cm->M = M; cm->N = N; cm->K = K; cm->batch = batch;
 	cm->sa = sa; cm->sb = sb; cm->sc = sc; cm->bt = bt;
 	cm->lda = lda; cm->ldb = ldb; cm->ldc = ldc;
 	cm->oa = oa; cm->ob = ob; cm->oc = oc;
+	cm->stamp = PK_GEMM * 32 + (int)(bt & 31u);
 	return 0;
+}
+
+/* Pack B into the VNNI fragments gemm_blk wants, once per write. The packed copy lives on
+ * the buffer and is remade only when the buffer's generation moves (a weight packs once;
+ * an activation-B repacks whenever a command has written it) or its shape changes. */
+static cl_mem ensure_packed(struct buffer *b, unsigned K, unsigned N, unsigned ldb,
+			    unsigned sb, unsigned batch)
+{
+	unsigned long long want = (unsigned long long)batch * K * N * 2ull;
+	if (!getenv("XMX_CL_BLK_NOCACHE") && b->packed && b->packed_gen == b->gen
+	    && b->packed_K == K && b->packed_N == N && b->packed_stride == sb
+	    && b->packed_batch == batch)
+		return b->packed;
+	if (b->packed && (b->packed_K != K || b->packed_N != N || b->packed_batch != batch)) {
+		clReleaseMemObject(b->packed);
+		b->packed = NULL;
+	}
+	if (!b->packed) {
+		cl_int err;
+		b->packed = clCreateBuffer(g.ctx, CL_MEM_READ_WRITE, want ? (size_t)want : 1, NULL, &err);
+		if (!b->packed)
+			return NULL;
+	}
+	cl_uint kk = K, nn = N, ll = ldb, ss = sb;
+	int i = 0;
+	clSetKernelArg(g.pack, i++, sizeof(cl_mem), &b->mem);
+	clSetKernelArg(g.pack, i++, sizeof(cl_mem), &b->packed);
+	clSetKernelArg(g.pack, i++, sizeof(cl_uint), &kk);
+	clSetKernelArg(g.pack, i++, sizeof(cl_uint), &nn);
+	clSetKernelArg(g.pack, i++, sizeof(cl_uint), &ll);
+	clSetKernelArg(g.pack, i++, sizeof(cl_uint), &ss);
+	size_t gsz = (K / 16u) * (N / 8u) * batch;
+	if (clEnqueueNDRangeKernel(g.q, g.pack, 1, NULL, &gsz, NULL, 0, NULL, NULL) != CL_SUCCESS)
+		return NULL;
+	b->packed_gen = b->gen;
+	b->packed_K = K;
+	b->packed_N = N;
+	b->packed_stride = sb;
+	b->packed_batch = batch;
+	return b->packed;
 }
 
 static int run_gemm(const struct cmd *c)
 {
-	struct buffer *A = slot(c->a), *B = slot(c->b), *C = slot(c->c);
-	/* M that is not a multiple of 16 falls back to the one-tile kernel; every other
-	 * dimension is already constrained at record time, so no masking is needed. */
+struct buffer *A = slot(c->a), *B = slot(c->b), *C = slot(c->c);
+	/* One 8-row tile per workgroup, two tiles (RM=2) when M divides, as HEAD did. The
+	 * run-to-run difference this used to be blamed for was uninitialised buffer memory,
+	 * not the compiler (see xmx_buf_create_kind and notes/AUDIT-opencl-defects.md). */
 	unsigned rm = (c->M % 16u) ? 1u : 2u;
 	cl_kernel k = rm == 1u ? g.gemm_small : g.gemm;
+	unsigned rn = g.rn;
 	unsigned transposed = c->bt & 1u;
 	unsigned epilogue = (c->bt >> 8) & 0xFu, narrow = (c->bt >> 12) & 1u;
 	unsigned compact = (c->bt >> 16) & 1u;
@@ -952,9 +1385,30 @@ static int run_gemm(const struct cmd *c)
 	if (getenv("XMX_GEMM_DEBUG"))
 		fprintf(stderr, "gemm M=%u N=%u K=%u batch=%u lda=%u ldb=%u ldc=%u oa=%u ob=%u oc=%u res=%u\n",
 			M, N, K, c->batch, lda, ldb, ldc, oa, ob, oc, residual);
+	/* The block-read path: B dense and untransposed, A dense with an even row stride, the
+	 * offsets word-aligned (the block reads are 32-bit). A plain dense weight B packs once;
+	 * anything else (a transposed B, a strided slice, an odd offset) stays on the scalar
+	 * kernel, which reads B itself. */
+	unsigned batch_n = c->batch ? c->batch : 1;
+	cl_mem bmem = B->mem;
+	if (g.gemm_blk && g.pack && !transposed && ob == 0 && lda == K && ldb == N
+	    && !(oa & 1u) && !(sa & 1u) && (K % 16u) == 0 && (N % 8u) == 0
+	    && c->bt == 0) {
+		cl_mem packed = ensure_packed(B, K, N, ldb, sb, batch_n);
+		if (packed) {
+			k = g.gemm_blk;
+			bmem = packed;
+			rm = 1;
+			rn = 1;
+			if (getenv("XMX_GEMM_DEBUG"))
+				fprintf(stderr, "  -> block-read GEMM, B packed\n");
+		} else if (getenv("XMX_GEMM_DEBUG")) {
+			fprintf(stderr, "  -> pack failed, scalar GEMM\n");
+		}
+	}
 	int i = 0;
 	clSetKernelArg(k, i++, sizeof(cl_mem), &A->mem);
-	clSetKernelArg(k, i++, sizeof(cl_mem), &B->mem);
+	clSetKernelArg(k, i++, sizeof(cl_mem), &bmem);
 	clSetKernelArg(k, i++, sizeof(cl_mem), &C->mem);
 	clSetKernelArg(k, i++, sizeof(cl_mem), &skipmem);
 	clSetKernelArg(k, i++, sizeof(cl_mem), &skipmem);
@@ -984,14 +1438,16 @@ static int run_gemm(const struct cmd *c)
 	clSetKernelArg(k, i++, sizeof(cl_uint), &win_w);
 	clSetKernelArg(k, i++, sizeof(cl_uint), &win_across);
 	clSetKernelArg(k, i++, sizeof(cl_uint), &win_pad);
-	unsigned batch = c->batch ? c->batch : 1;
-	size_t work[3] = { (size_t)N / (8 * g.rn) * 8, (size_t)M / (8 * rm), batch };
+	unsigned batch = batch_n;
+	size_t work[3] = { (size_t)N / (8 * rn) * 8, (size_t)M / (8 * rm), batch };
 	size_t group[3] = { 8, 1, 1 };
 	cl_event ev = NULL;
 	cl_int err = clEnqueueNDRangeKernel(g.q, k, 3, NULL, work, group, 0, NULL,
-					    g.time ? &ev : NULL);
+					    profiling() ? &ev : NULL);
 	if (err != CL_SUCCESS)
 		return fail("gemm dispatch: %d", err);
+	if (getenv("XMX_CL_SERIAL"))      /* diagnostic: one kernel in flight at a time */
+		clFinish(g.q);
 	trace_push(ev, 0);
 	return 0;
 }
@@ -1004,44 +1460,224 @@ static int run_row(const struct cmd *c);
 #define BUF_HOST_READ 1
 #define BUF_HOST_WRITE 2
 
+/* XMX_CL_TRACE=<path>: after every command, finish the queue and append a hash of each
+ * buffer it wrote. Two runs' files diff to the first command whose output differs
+ * (scripts/opencl-trace.sh). Diagnostic only: it serialises the queue. */
+static unsigned long long hash_buffer(int id)
+{
+	struct buffer *b = (id >= 0 && id < MAX_BUF) ? &g.buf[id] : NULL;
+	if (!b || !b->used || !b->bytes)
+		return 0;
+	unsigned char *data = malloc((size_t)b->bytes);
+	if (!data)
+		return 1;
+	unsigned long long h = 1469598103934665603ull;
+	if (clEnqueueReadBuffer(g.q, b->mem, CL_TRUE, 0, (size_t)b->bytes, data, 0, NULL, NULL)
+	    == CL_SUCCESS)
+		for (unsigned long long i = 0; i < b->bytes; i++)
+			h = (h ^ data[i]) * 1099511628211ull;
+	free(data);
+	return h;
+}
+
+/* XMX_CL_DUMP_AT=<line> (1-based, counting trace lines): write that command's buffers a,
+ * b, c, d, second raw to <XMX_CL_TRACE>.<line>.<role>, for frame_stages.py dumpdiff. */
+static void dump_buffer(const char *base, long line, const char *role, int id)
+{
+	struct buffer *b = (id >= 0 && id < MAX_BUF) ? &g.buf[id] : NULL;
+	if (!b || !b->used || !b->bytes)
+		return;
+	char path[1024];
+	snprintf(path, sizeof path, "%s.%ld.%s", base, line, role);
+	unsigned char *data = malloc((size_t)b->bytes);
+	FILE *f = data ? fopen(path, "wb") : NULL;
+	if (f && clEnqueueReadBuffer(g.q, b->mem, CL_TRUE, 0, (size_t)b->bytes, data, 0, NULL, NULL)
+		 == CL_SUCCESS)
+		fwrite(data, 1, (size_t)b->bytes, f);
+	if (f)
+		fclose(f);
+	free(data);
+}
+
+static void trace_command(const struct cmd *c)
+{
+	static FILE *out;
+	static int tried;
+	static long line;
+	static long index;
+	static long dump_at;
+	if (!tried) {
+		const char *path = getenv("XMX_CL_TRACE");
+		tried = 1;
+		out = path && *path ? fopen(path, "a") : NULL;
+		const char *at = getenv("XMX_CL_DUMP_AT");
+		dump_at = at ? atol(at) : 0;
+	}
+	if (!out)
+		return;
+	clFinish(g.q);
+	if (++line == dump_at) {
+		const char *base = getenv("XMX_CL_TRACE");
+		dump_buffer(base, line, "a", c->a);
+		dump_buffer(base, line, "b", c->b);
+		dump_buffer(base, line, "c", c->c);
+		dump_buffer(base, line, "d", c->d);
+		dump_buffer(base, line, "second", c->second);
+		fprintf(out, "# dumped: lda=%u ldb=%u ldc=%u oa=%u ob=%u oc=%u sa=%u sb=%u sc=%u "
+			"height=%u width=%u across=%u pad=%u\n", c->lda, c->ldb, c->ldc, c->oa, c->ob,
+			c->oc, c->sa, c->sb, c->sc, c->height, c->width, c->across, c->pad);
+	}
+	fprintf(out, "%ld kind=%d a=%d b=%d c=%d d=%d second=%d M=%u N=%u K=%u batch=%u bt=%#x "
+		"n=%u ch=%u k=%u rows=%u width=%u heads=%u flags=%#x out=%016llx",
+		index++, c->kind, c->a, c->b, c->c, c->d, c->second, c->M, c->N, c->K, c->batch, c->bt,
+		c->n, c->channels, c->k, c->rows, c->width, c->heads, c->flags, hash_buffer(c->c));
+	if (c->kind == K_UNARY2)
+		fprintf(out, " second=%016llx", hash_buffer(c->second));
+	if (c->kind == K_ROW)
+		fprintf(out, " d=%016llx", hash_buffer(c->d));
+	fputc('\n', out);
+	fflush(out);
+}
+
+/* One command on the queue. A K_COMPOSED op is the graph's single op, lowered here into
+ * the several kernels it is made of (qkv, the fused projection, a window block); the
+ * recorded op stream stays the graph's, so the pass counts match the fused backends. */
+/* A command has written its target(s): move their generation so a VNNI-packed copy of one
+ * is remade before the next GEMM that reads it (a write after a pack, later in the same
+ * submit, is what made the single- and block-schedule frames differ). */
+static void bump_written(const struct cmd *c)
+{
+	if (c->c >= 0 && c->c < MAX_BUF && g.buf[c->c].used)
+		g.buf[c->c].gen++;
+	if (c->kind == K_UNARY2 && c->second >= 0 && c->second < MAX_BUF && g.buf[c->second].used)
+		g.buf[c->second].gen++;
+	else if (c->kind == K_ROW && c->d >= 0 && c->d < MAX_BUF && g.buf[c->d].used)
+		g.buf[c->d].gen++;
+}
+
+static int exec_one(const struct cmd *c)
+{
+	if (c->kind == K_GEMM) {
+		if (run_gemm(c))
+			return -1;
+		bump_written(c);
+		return 0;
+	}
+	if (c->kind == K_UNARY || c->kind == K_UNARY2) {
+		if (run_unary(c))
+			return -1;
+		bump_written(c);
+		return 0;
+	}
+	if (c->kind == K_ROW) {
+		if (run_row(c))
+			return -1;
+		bump_written(c);
+		return 0;
+	}
+	if (c->kind == K_COMPOSED) {
+		for (int j = 0; j < c->nparts; j++)
+			if (exec_one(&c->parts[j]))
+				return -1;
+		return 0;
+	}
+	if (c->kind == K_COPY) {
+		struct buffer *s = slot(c->a), *t = slot(c->c);
+		/* always on the device, in queue order: the device copy is the current one once
+		 * a kernel has written it, and the shadows sync at the ends of submit */
+		cl_event ev = NULL;
+		if (clEnqueueCopyBuffer(g.q, s->mem, t->mem, (size_t)c->so, (size_t)c->to,
+					(size_t)c->bytes, 0, NULL, profiling() ? &ev : NULL) != CL_SUCCESS)
+			return fail("clEnqueueCopyBuffer failed");
+		trace_push(ev, 4);
+		t->gen++;
+		return 0;
+	}
+	return fail("unknown command kind %d", c->kind);
+}
+
+static void trace_command(const struct cmd *c);
+
+static int exec_traced(const struct cmd *c)
+{
+	g_top_stamp = c->stamp;
+	g_group++;
+	if (c->kind == K_COMPOSED) {
+		for (int j = 0; j < c->nparts; j++) {
+			if (exec_one(&c->parts[j]))
+				return -1;
+			trace_command(&c->parts[j]);
+		}
+		return 0;
+	}
+	if (exec_one(c))
+		return -1;
+	trace_command(c);
+	return 0;
+}
+
+/* Bind the pull set: every buffer a command (or a composed op's parts) writes. */
+static void collect_pull(const struct cmd *c, unsigned char *pull)
+{
+	if (c->kind == K_COMPOSED) {
+		for (int j = 0; j < c->nparts; j++)
+			collect_pull(&c->parts[j], pull);
+		return;
+	}
+	if (c->c >= 0 && c->c < MAX_BUF) pull[c->c] = 1;
+	if (c->kind == K_UNARY2 && c->second >= 0 && c->second < MAX_BUF) pull[c->second] = 1;
+	if (c->kind == K_ROW && c->d >= 0 && c->d < MAX_BUF) pull[c->d] = 1;
+}
+
 static int execute(const struct cmd *list, int n)
 {
 	trace_reset();
+	/* Which buffers this submit writes, and what must be pushed up. A written buffer's
+	 * generation moves, so its VNNI-packed copy is remade before the GEMM that reads it
+	 * (packing is enqueued in queue order, after the write). Host-write buffers are the
+	 * host's and always go up first. */
+	unsigned char *pull = calloc(MAX_BUF, 1);
+	if (!pull)
+		return fail("pull map allocation");
+	for (int i = 0; i < n; i++)
+		collect_pull(&list[i], pull);
+	for (int i = 0; i < MAX_BUF; i++) {
+		struct buffer *b = &g.buf[i];
+		if (b->used && b->kind == BUF_HOST_WRITE && b->host && b->bytes)
+			b->gen++;      /* the host's content is new this frame */
+	}
 	/* Host-writable buffers the model filled through the pointer this frame: up first. */
 	for (int i = 0; i < MAX_BUF; i++) {
 		struct buffer *b = &g.buf[i];
 		if (b->used && b->host && b->kind == BUF_HOST_WRITE && b->bytes
 		    && clEnqueueWriteBuffer(g.q, b->mem, CL_TRUE, 0, (size_t)b->bytes, b->host, 0, NULL, NULL)
-			       != CL_SUCCESS)
+			       != CL_SUCCESS) {
+			free(pull);
 			return fail("push host-write buffer: %d", -1);
+		}
 	}
 	for (int i = 0; i < n; i++) {
-		const struct cmd *c = &list[i];
-		if (c->kind == K_GEMM) {
-			if (run_gemm(c))
-				return -1;
-		} else if (c->kind == K_UNARY || c->kind == K_UNARY2) {
-			if (run_unary(c))
-				return -1;
-		} else if (c->kind == K_ROW) {
-			if (run_row(c))
-				return -1;
-		} else if (c->kind == K_COPY) {
-			struct buffer *s = slot(c->a), *t = slot(c->c);
-			if (s->host && t->host) {
-				memmove((char *)t->host + c->to, (char *)s->host + c->so, c->bytes);
-			} else {
-				cl_event ev = NULL;
-				if (clEnqueueCopyBuffer(g.q, s->mem, t->mem, (size_t)c->so,
-							(size_t)c->to, (size_t)c->bytes, 0, NULL,
-							g.time ? &ev : NULL) != CL_SUCCESS)
-					return fail("clEnqueueCopyBuffer failed");
-				trace_push(ev, 4);
-			}
+		if (exec_traced(&list[i])) {
+			free(pull);
+			return -1;
 		}
 	}
 	clFinish(g.q);
 	trace_sum();
+	/* A host-write buffer a pass wrote is pushed up again at the next submit; pull it
+	 * first, or that push puts back what the host last wrote and undoes the pass - which
+	 * is what broke one-submit-a-block execution (test_frame_determinism.py). On Vulkan
+	 * the memory is shared and this is free. ponytail: whole buffers, not ranges. */
+	for (int i = 0; i < MAX_BUF; i++) {
+		struct buffer *b = &g.buf[i];
+		if (pull[i] && b->used && b->host && b->kind == BUF_HOST_WRITE && b->bytes
+		    && clEnqueueReadBuffer(g.q, b->mem, CL_TRUE, 0, (size_t)b->bytes, b->host, 0, NULL, NULL)
+			       != CL_SUCCESS) {
+			free(pull);
+			return fail("pull host-write buffer: %d", -1);
+		}
+	}
+	free(pull);
 	/* Device-written buffers the host will read back through the pointer: down last. */
 	for (int i = 0; i < MAX_BUF; i++) {
 		struct buffer *b = &g.buf[i];
@@ -1058,6 +1694,7 @@ int xmx_submit(void)
 	int n = g.ncmd;
 	int r = execute(g.cmd, n);
 	g.ncmd = 0;
+	free_parts(g.cmd, n);
 	return r < 0 ? r : n;
 }
 
@@ -1073,6 +1710,9 @@ int xmx_graph_capture(void)
 	if (!copy)
 		return fail("graph capture out of memory");
 	memcpy(copy, g.cmd, sizeof(struct cmd) * (size_t)g.ncmd);
+	/* the graph now owns the composed ops' lowered commands: hand the pointers over */
+	for (int i = 0; i < g.ncmd; i++)
+		g.cmd[i].parts = NULL;
 	g.graph[id].live = 1;
 	g.graph[id].list = copy;
 	g.graph[id].n = g.ncmd;
@@ -1089,38 +1729,129 @@ int xmx_graph_destroy(int id)
 {
 	if (id < 0 || id >= MAX_GRAPHS || !g.graph[id].live)
 		return 0;
+	free_parts(g.graph[id].list, g.graph[id].n);
 	free(g.graph[id].list);
 	g.graph[id].live = 0;
 	g.graph[id].list = NULL;
 	g.graph[id].n = 0;
+	collect_scratch();      /* scratch only this graph named is free now */
 	return 0;
 }
 
 /* ---- plain GEMM path (gemm_runner) ------------------------------------------------ */
 int xmx_init(const char *spv) { (void)spv; return g.open ? 0 : -1; }
-int xmx_reserve(unsigned M, unsigned N, unsigned K, void **pa, void **pb, void **pc)
+int xmx_reserve(unsigned M, unsigned N, unsigned K, void **pa, void **pb, void **pc);
+/* `xmx_gemm`/`xmx_gemm_batched` push the reserved shadows, dispatch once, read back. */
+static int reserve_side(int *id, void **host, unsigned long long *sz, unsigned long long bytes)
 {
-	(void)M; (void)N; (void)K; (void)pa; (void)pb; (void)pc;
-	return fail("xmx_reserve is not used by the OpenCL backend");
+	if (bytes <= *sz && *id >= 0 && slot(*id))
+		return 0;
+	if (*id >= 0) {
+		xmx_buf_destroy(*id);
+		*id = -1;
+	}
+	free(*host);
+	*host = NULL;
+	*sz = 0;
+	if (!bytes)
+		return 0;
+	*host = calloc(1, (size_t)bytes);
+	if (!*host)
+		return fail("reserve out of memory");
+	*id = xmx_buf_create_kind(bytes, 0);
+	if (*id < 0) {
+		free(*host);
+		*host = NULL;
+		return -1;
+	}
+	g.buf[*id].internal = 1;
+	*sz = bytes;
+	return 0;
 }
-int xmx_gemm(unsigned M, unsigned N, unsigned K, const void *a, const void *b, void *c,
-	     unsigned iters)
-{
-	(void)M; (void)N; (void)K; (void)a; (void)b; (void)c; (void)iters;
-	return fail("xmx_gemm (bare) not implemented; use the resident path");
-}
+
 int xmx_reserve_bytes(unsigned long long a, unsigned long long b, unsigned long long c,
 		      void **pa, void **pb, void **pc)
 {
-	(void)a; (void)b; (void)c; (void)pa; (void)pb; (void)pc;
-	return fail("xmx_reserve_bytes is not used by the OpenCL backend");
+	if (!g.open)
+		return fail("device not open");
+	if (reserve_side(&g_ria, &g_ra, &g_rasz, a) || reserve_side(&g_rib, &g_rb, &g_rbsz, b)
+	    || reserve_side(&g_ric, &g_rc, &g_rcsz, c))
+		return -1;
+	if (pa)
+		*pa = g_ra;
+	if (pb)
+		*pb = g_rb;
+	if (pc)
+		*pc = g_rc;
+	return 0;
+}
+
+/* The typed reserve the `gemm_mapped` zero-copy path uses: half operands, float32 out. */
+int xmx_reserve(unsigned M, unsigned N, unsigned K, void **pa, void **pb, void **pc)
+{
+	return xmx_reserve_bytes((unsigned long long)M * K * 2u, (unsigned long long)K * N * 2u,
+				 (unsigned long long)M * N * 4u, pa, pb, pc);
+}
+
+static int push_side(int id, const void *src, unsigned long long bytes)
+{
+	if (clEnqueueWriteBuffer(g.q, slot(id)->mem, CL_TRUE, 0, (size_t)bytes, src, 0, NULL, NULL)
+	    != CL_SUCCESS)
+		return fail("descriptor gemm operand upload");
+	return 0;
+}
+
+/* One recorded GEMM, then the queue drained and `c` read back. a, b or c may be NULL, in
+ * which case the reserved shadow stands in for it (the `gemm_mapped` zero-copy path). */
+static int descriptor_gemm(unsigned M, unsigned N, unsigned K, const void *a, const void *b,
+			   void *c, unsigned batch, unsigned sa, unsigned sb, unsigned sc,
+			   unsigned bt, unsigned iters)
+{
+	if (M % 8u || N % (unsigned)(8 * g.rn) || K % 16u)
+		return fail("descriptor GEMM shape not a multiple of the tile");
+	unsigned long long need_a = (unsigned long long)M * K * 2u;
+	unsigned long long need_b = (unsigned long long)K * N * 2u;
+	unsigned long long need_c = (unsigned long long)M * N * 4u;
+	if (batch > 1u) {
+		need_a = (unsigned long long)batch * sa * 2u;
+		need_b = (unsigned long long)batch * sb * 2u;
+		need_c = (unsigned long long)batch * sc * 4u;
+	}
+	if (reserve_side(&g_ria, &g_ra, &g_rasz, need_a)
+	    || reserve_side(&g_rib, &g_rb, &g_rbsz, need_b)
+	    || reserve_side(&g_ric, &g_rc, &g_rcsz, need_c))
+		return -1;
+	if (push_side(g_ria, a ? a : g_ra, need_a) || push_side(g_rib, b ? b : g_rb, need_b))
+		return -1;
+	struct cmd cm;
+	memset(&cm, 0, sizeof cm);
+	cm.kind = K_GEMM;
+	cm.a = g_ria; cm.b = g_rib; cm.c = g_ric;
+	cm.M = M; cm.N = N; cm.K = K; cm.batch = batch;
+	cm.sa = sa; cm.sb = sb; cm.sc = sc; cm.bt = bt;
+	for (unsigned i = 0; i < (iters ? iters : 1u); i++)
+		if (run_gemm(&cm))
+			return -1;
+	if (clEnqueueReadBuffer(g.q, slot(g_ric)->mem, CL_TRUE, 0, (size_t)need_c,
+				c ? c : g_rc, 0, NULL, NULL) != CL_SUCCESS)
+		return fail("descriptor gemm result readback");
+	return 0;
+}
+
+int xmx_gemm(unsigned M, unsigned N, unsigned K, const void *a, const void *b, void *c,
+	     unsigned iters)
+{
+	if (!g.open)
+		return fail("device not open");
+	return descriptor_gemm(M, N, K, a, b, c, 1u, M * K, K * N, M * N, 0u, iters);
 }
 int xmx_init_batched(const char *spv) { (void)spv; return g.open ? 0 : -1; }
 int xmx_gemm_batched(unsigned M, unsigned N, unsigned K, unsigned batch,
 		     unsigned sa, unsigned sb, unsigned sc, unsigned bt)
 {
-	(void)M; (void)N; (void)K; (void)batch; (void)sa; (void)sb; (void)sc; (void)bt;
-	return fail("xmx_gemm_batched is not used by the OpenCL backend");
+	if (!g.open)
+		return fail("device not open");
+	return descriptor_gemm(M, N, K, NULL, NULL, NULL, batch, sa, sb, sc, bt, 1u);
 }
 
 /* ---- resident / fused families: one at a time, each against its Vulkan test -------- */
@@ -1146,12 +1877,13 @@ int xmx_rec_gemm_residual(int a, int b, int c, int skip, int cosine, unsigned M,
 		return fail("gemm_residual %ux%ux%u: bad shape", M, N, K);
 	if (g.ncmd >= MAX_CMD)
 		return fail("command list full");
-	struct cmd *cm = &g.cmd[g.ncmd++];
+	struct cmd *cm = new_cmd(0);
 	cm->kind = K_GEMM;
 	cm->a = a; cm->b = b; cm->c = c; cm->d = skip; cm->second = cosine;
 	cm->M = M; cm->N = N; cm->K = K; cm->batch = 1;
 	cm->sa = M * K; cm->sb = K * N; cm->sc = M * N;
 	cm->bt = flags | 0x20000u;
+	cm->stamp = PK_GEMM * 32 + (int)(cm->bt & 31u);
 	return 0;
 }
 int xmx_rec_gemm_window_residual(int a, int b, int c, int skip, int cosine, unsigned M, unsigned N, unsigned K, unsigned flags, unsigned h, unsigned w, unsigned ac, unsigned pad)
@@ -1162,21 +1894,153 @@ int xmx_rec_gemm_window_residual(int a, int b, int c, int skip, int cosine, unsi
 		return fail("gemm_window_residual %ux%ux%u: bad shape", M, N, K);
 	if (g.ncmd >= MAX_CMD)
 		return fail("command list full");
-	struct cmd *cm = &g.cmd[g.ncmd++];
+	struct cmd *cm = new_cmd(0);
 	cm->kind = K_GEMM;
 	cm->a = a; cm->b = b; cm->c = c; cm->d = skip; cm->second = cosine;
 	cm->M = M; cm->N = N; cm->K = K; cm->batch = 1;
 	cm->sa = M * K; cm->sb = K * N; cm->sc = M * N;
 	cm->height = h; cm->width = w; cm->across = ac; cm->pad = pad;
 	cm->bt = flags | 0x20000u | 0x80000u;
+	cm->stamp = PK_GEMM * 32 + (int)(cm->bt & 31u);
 	return 0;
 }
-int xmx_rec_gemm_qkv(int a, int weight, int q, int k, int v, int scale, unsigned M, unsigned channels, unsigned heads, unsigned tokens, unsigned vit)
-{ (void)a;(void)weight;(void)q;(void)k;(void)v;(void)scale;(void)M;(void)channels;(void)heads;(void)tokens;(void)vit; return fail("gemm_qkv: not implemented yet"); }
-int xmx_rec_gemm_qkv_window(int image, int weight, int q, int k, int v, int scale, unsigned M, unsigned channels, unsigned heads, unsigned tokens, unsigned width, unsigned height, unsigned across, unsigned pad, unsigned image_mode)
-{ (void)image;(void)weight;(void)q;(void)k;(void)v;(void)scale;(void)M;(void)channels;(void)heads;(void)tokens;(void)width;(void)height;(void)across;(void)pad;(void)image_mode; return fail("gemm_qkv_window: not implemented yet"); }
+
+/* Scratch for the composed fused passes. In-order queue and passes recorded in sequence,
+ * so one buffer per role is enough. A role that must grow gets a new buffer; the old one
+ * is freed unless the open recording or a live graph still names it, in which case it is
+ * kept (and becomes collectable once that graph is destroyed: `collect_scratch`). */
+enum { SCR_HIDDEN, SCR_MADE32, SCR_MADE16, SCR_PROJ, SCR_WIN16, SCR_SCORES, SCR_PROBS,
+       SCR_CTX, SCR_RECIP, SCR_Q, SCR_K, SCR_V, SCR_ATT, SCR_OUT16, SCR_ROLES };
+static int g_scratch[SCR_ROLES] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+
+static int names_buffer(const struct cmd *list, int n, int id)
+{
+	for (int i = 0; i < n; i++) {
+		const struct cmd *c = &list[i];
+		if (c->a == id || c->b == id || c->c == id || c->d == id || c->second == id)
+			return 1;
+		if (c->kind == K_COMPOSED && c->parts && names_buffer(c->parts, c->nparts, id))
+			return 1;
+	}
+	return 0;
+}
+
+static int scratch_referenced(int id)
+{
+	if (names_buffer(g.cmd, g.ncmd, id))
+		return 1;
+	for (int i = 0; i < MAX_GRAPHS; i++)
+		if (g.graph[i].live && names_buffer(g.graph[i].list, g.graph[i].n, id))
+			return 1;
+	return 0;
+}
+
+/* Free superseded scratch nothing names any more. */
+static void collect_scratch(void)
+{
+	for (int i = 0; i < MAX_BUF; i++) {
+		if (!g.buf[i].used || !g.buf[i].internal)
+			continue;
+		int current = 0;
+		for (int r = 0; r < SCR_ROLES; r++)
+			current |= g_scratch[r] == i;
+		if (!current && !scratch_referenced(i))
+			xmx_buf_destroy(i);
+	}
+}
+
+static void scratch_reset(void)
+{
+	for (int r = 0; r < SCR_ROLES; r++)
+		g_scratch[r] = -1;
+}
+
+static int scratch(int role, unsigned long long bytes)
+{
+	int id = g_scratch[role];
+	if (id >= 0 && slot(id) && slot(id)->bytes >= bytes)
+		return id;
+	int grown = xmx_buf_create_kind(bytes, 0);
+	if (grown < 0)
+		return grown;
+	g.buf[grown].internal = 1;
+	g_scratch[role] = grown;
+	collect_scratch();
+	return grown;
+}
+int xmx_rec_unary(unsigned kind, int a, int b, int c, int d, unsigned n, unsigned channels,
+		  float p0, unsigned batch, unsigned sa, unsigned sb, unsigned sc, unsigned k);
+int xmx_rec_row(unsigned kind, int a, int b, int c, int d, unsigned rows, unsigned width,
+		unsigned heads, unsigned scaled, unsigned stride, float cap);
+
+/* The QKV projection as the passes it replaces: the GEMM into float32, cosine_publish for
+ * Q (with its head's scale) and K, split_heads with the E4M3 publish for V. Bit-identical
+ * to that reference by construction. ponytail: the float32 projection goes through device
+ * memory; folding the three into the GEMM's epilogue is P3. */
+int xmx_rec_gemm_qkv(int a, int weight, int q, int k, int v, int scale, unsigned M,
+		     unsigned channels, unsigned heads, unsigned tokens, unsigned vit)
+{
+	if (!heads || !tokens || channels != heads * 32u || M % tokens)
+		return fail("invalid QKV projection");
+	if (!slot(a) || !slot(weight) || !slot(q) || !slot(k) || !slot(v) || !slot(scale))
+		return fail("QKV projection operand is not a live buffer");
+	unsigned c3 = 3u * channels;
+	int proj = scratch(SCR_PROJ, (unsigned long long)M * c3 * 4u);
+	if (proj < 0)
+		return -1;
+	int base = g.ncmd;
+	if (xmx_rec_gemm(a, weight, proj, M, c3, channels, 1, M * channels, channels * c3, M * c3,
+			 0, 0, 0, 0, 0, 0, 0))
+		return -1;
+	unsigned row = 0x1000u | 0x20000u | (vit ? 0x80000u : 0u);  /* COSINE_PUBLISH, qkv gather */
+	if (xmx_rec_row(row, proj, proj, q, scale, M * heads, tokens, heads, 1, 0, 0.0f)
+	    || xmx_rec_row(row | (1u << 18), proj, proj, k, proj, M * heads, tokens, heads, 0, 0, 0.0f))
+		return -1;
+	/* SPLIT_HEADS (10), part 2, E4M3 publish into half */
+	if (xmx_rec_unary(10u | (1u << 8) | 0x1000u, proj, proj, v, proj, M * channels, channels,
+			  1.0f, heads, tokens, 2u, 0, 0))
+		return -1;
+	return wrap_composed(base, PK(PK_GEMM, 0));
+}
+
+/* The window-gathered projection: partition the image (float32 or half; E4M3 published on
+ * the way in when asked) into a half buffer, then the projection on it. */
+int xmx_rec_gemm_qkv_window(int image, int weight, int q, int k, int v, int scale, unsigned M,
+			    unsigned channels, unsigned heads, unsigned tokens, unsigned width,
+			    unsigned height, unsigned across, unsigned pad, unsigned image_mode)
+{
+	if (!width || !height || !across || tokens != 64u || image_mode > 3u)
+		return fail("invalid window-gathered QKV projection");
+	if (!slot(image))
+		return fail("QKV projection image is not a live buffer");
+	int win = scratch(SCR_WIN16, (unsigned long long)M * channels * 2u);
+	if (win < 0)
+		return -1;
+	unsigned flags = 7u | 0x1000u | ((image_mode & 1u) ? 0x8000u : 0u)   /* PARTITION */
+		       | ((image_mode & 2u) ? (1u << 8) : 0u);
+	int base = g.ncmd;
+	if (xmx_rec_unary(flags, image, image, win, image, M * channels, channels, 1.0f, 8u,
+			  height, width, across, pad))
+		return -1;
+	if (xmx_rec_gemm_qkv(win, weight, q, k, v, scale, M, channels, heads, tokens, 0))
+		return -1;
+	return wrap_composed(base, PK(PK_GEMM, 0));
+}
+/* The float32 product, and the same product published to E4M3 as half: two GEMMs. The
+ * epilogue publishes the float32 accumulator, which is the value the first one stores,
+ * so the half copy equals an `e4m3_half` of `c` bit for bit. */
 int xmx_rec_gemm_dual(int a, int b, int c, int half_copy, unsigned M, unsigned N, unsigned K)
-{ (void)a;(void)b;(void)c;(void)half_copy;(void)M;(void)N;(void)K; return fail("gemm_dual: not implemented yet"); }
+{
+	if (!slot(half_copy))
+		return fail("invalid GEMM half copy");
+	int base = g.ncmd;
+	if (xmx_rec_gemm(a, b, c, M, N, K, 1, M * K, K * N, M * N, 0, 0, 0, 0, 0, 0, 0)
+	    || xmx_rec_gemm(a, b, half_copy, M, N, K, 1, M * K, K * N, M * N,
+			    (1u << 8) | 0x1000u, 0, 0, 0, 0, 0, 0))
+		return -1;
+	return wrap_composed(base, PK(PK_GEMM, 0));
+}
+
 static int rec_unary(unsigned kind, int a, int b, int c, int d, int second,
 		     unsigned n, unsigned channels, float p0, unsigned batch,
 		     unsigned sa, unsigned sb, unsigned sc, unsigned k)
@@ -1185,12 +2049,13 @@ static int rec_unary(unsigned kind, int a, int b, int c, int d, int second,
 		return fail("unary: bad buffer");
 	if (g.ncmd >= MAX_CMD)
 		return fail("command list full");
-	struct cmd *cm = &g.cmd[g.ncmd++];
+	struct cmd *cm = new_cmd(0);
 	cm->kind = second >= 0 ? K_UNARY2 : K_UNARY;
 	cm->flags = kind;
 	cm->a = a; cm->b = b; cm->c = c; cm->d = d; cm->second = second;
 	cm->n = n; cm->channels = channels; cm->cap = p0;
 	cm->batch = batch; cm->sa = sa; cm->sb = sb; cm->sc = sc; cm->k = k;
+	cm->stamp = PK_UNARY * 32 + (int)(kind & 31u);
 	return 0;
 }
 
@@ -1208,6 +2073,12 @@ static int run_unary(const struct cmd *c)
 	struct buffer *A = slot(c->a), *B = slot(c->b), *C = slot(c->c), *D = slot(c->d);
 	struct buffer *S = c->second >= 0 ? slot(c->second) : NULL;
 	cl_kernel k = g.resident;
+	if (!A || !C)
+		return fail("unary: bad buffer at run time");
+	if (!B)
+		B = A;                  /* an unused operand still needs a valid binding */
+	if (!D)
+		D = A;
 	cl_uint flags = c->flags, m = c->n, n = c->channels, kk = c->k;
 	cl_uint batch = c->batch, sa = c->sa, sb = c->sb, sc = c->sc;
 	cl_mem nullmem = NULL;
@@ -1229,9 +2100,10 @@ static int run_unary(const struct cmd *c)
 	clSetKernelArg(k, i++, sizeof(float), &p0);
 	size_t local = 256, global = ((size_t)m + local - 1) / local * local;
 	cl_event ev = NULL;
-	if (clEnqueueNDRangeKernel(g.q, k, 1, NULL, &global, &local, 0, NULL,
-				   g.time ? &ev : NULL) != CL_SUCCESS)
-		return fail("unary dispatch");
+	cl_int err = clEnqueueNDRangeKernel(g.q, k, 1, NULL, &global, &local, 0, NULL,
+					    profiling() ? &ev : NULL);
+	if (err != CL_SUCCESS)
+		return fail("unary dispatch: %d", err);
 	trace_push(ev, c->kind == 2 ? 1 : 2);
 	return 0;
 }
@@ -1241,12 +2113,13 @@ int xmx_rec_row(unsigned kind, int a, int b, int c, int d, unsigned rows, unsign
 		return fail("row: bad buffer");
 	if (g.ncmd >= MAX_CMD)
 		return fail("command list full");
-	struct cmd *cm = &g.cmd[g.ncmd++];
+	struct cmd *cm = new_cmd(0);
 	cm->kind = K_ROW;
 	cm->flags = kind;
 	cm->a = a; cm->b = b; cm->c = c; cm->d = d;
 	cm->M = rows; cm->N = width; cm->batch = heads; cm->k = scaled; cm->sa = stride;
 	cm->cap = cap;
+	cm->stamp = PK_ROW * 32 + (int)(kind & 31u);
 	return 0;
 }
 
@@ -1273,38 +2146,329 @@ static int run_row(const struct cmd *c)
 	clSetKernelArg(k, i++, sizeof(float), &p0);
 	size_t local = 32, global = ((size_t)m + local - 1) / local * local;
 	cl_event ev = NULL;
-	if (clEnqueueNDRangeKernel(g.q, k, 1, NULL, &global, &local, 0, NULL,
-				   g.time ? &ev : NULL) != CL_SUCCESS)
-		return fail("row dispatch");
+	cl_int err = clEnqueueNDRangeKernel(g.q, k, 1, NULL, &global, &local, 0, NULL,
+					    profiling() ? &ev : NULL);
+	if (err != CL_SUCCESS)
+		return fail("row dispatch: %d", err);
 	trace_push(ev, 3);
 	return 0;
 }
 int xmx_rec_history(int history, int motion, int out, unsigned pixels, unsigned channels, unsigned height, unsigned width, unsigned absolute)
 { (void)history;(void)motion;(void)out;(void)pixels;(void)channels;(void)height;(void)width;(void)absolute; return fail("history: not implemented yet"); }
-int xmx_rec_qkv(int source, int q, int k, int v, int scale, unsigned rows, unsigned tokens, unsigned heads, unsigned vit)
-{ (void)source;(void)q;(void)k;(void)v;(void)scale;(void)rows;(void)tokens;(void)heads;(void)vit; return fail("qkv: not implemented yet"); }
-int xmx_rec_window_attention(int q, int k, int v, int bias, int out, unsigned batches, unsigned heads, unsigned merged)
-{ (void)q;(void)k;(void)v;(void)bias;(void)out;(void)batches;(void)heads;(void)merged; return fail("window_attention: not implemented yet"); }
-int xmx_rec_ffn(int a, int expand, int projection, int out, int skip, int cosine, unsigned M, unsigned cin, unsigned hidden, unsigned groups, unsigned flags)
-{ (void)a;(void)expand;(void)projection;(void)out;(void)skip;(void)cosine;(void)M;(void)cin;(void)hidden;(void)groups;(void)flags; return fail("ffn: not implemented yet"); }
-int xmx_rec_ffn_merge(int source, int skip, int sincos, int expand, int projection, int out, int cosine, unsigned height, unsigned width, unsigned source_width, unsigned flags)
-{ (void)source;(void)skip;(void)sincos;(void)expand;(void)projection;(void)out;(void)cosine;(void)height;(void)width;(void)source_width;(void)flags; return fail("ffn_merge: not implemented yet"); }
-int xmx_rec_ffn_stem(int features, int adapter, int expand, int projection, int out, int cosine, unsigned M, unsigned flags)
-{ (void)features;(void)adapter;(void)expand;(void)projection;(void)out;(void)cosine;(void)M;(void)flags; return fail("ffn_stem: not implemented yet"); }
-int xmx_rec_gemm_window_residual_pool(int a, int b, int skip_out, int skip, int cosine, int pooled, unsigned M, unsigned N, unsigned K, unsigned flags, unsigned height, unsigned width, unsigned across, unsigned pad)
-{ (void)a;(void)b;(void)skip_out;(void)skip;(void)cosine;(void)pooled;(void)M;(void)N;(void)K;(void)flags;(void)height;(void)width;(void)across;(void)pad; return fail("gemm_window_residual_pool: not implemented yet"); }
-int xmx_rec_window_block(int image, int qkv, int projection, int target, int bias, int cosine, int scale, int pooled, unsigned windows, unsigned height, unsigned width, unsigned across, unsigned pad, unsigned flags)
-{ (void)image;(void)qkv;(void)projection;(void)target;(void)bias;(void)cosine;(void)scale;(void)pooled;(void)windows;(void)height;(void)width;(void)across;(void)pad;(void)flags; return fail("window_block: not implemented yet"); }
-int xmx_rec_global_attention(int q, int k, int v, int merged, unsigned rows, unsigned tokens, unsigned heads)
-{ (void)q;(void)k;(void)v;(void)merged;(void)rows;(void)tokens;(void)heads; return fail("global_attention: not implemented yet"); }
+/* The joint Q/K/V preparation as the three passes it replaces: cosine_publish for Q with
+ * its head's scale and for K, split_heads with the E4M3 publish for V. `source` is the
+ * projection already in (window, token, 3, head, 32). Bit-identical to
+ * xmx_rec_gemm_qkv's own three finishing passes (test_joint_qkv.py). */
+int xmx_rec_qkv(int source, int q, int k, int v, int scale, unsigned rows, unsigned tokens,
+		unsigned heads, unsigned vit)
+{
+	if (!heads || !tokens || rows % heads)
+		return fail("invalid joint QKV extent");
+	if (!slot(source) || !slot(q) || !slot(k) || !slot(v) || !slot(scale))
+		return fail("joint QKV operand is not a live buffer");
+	unsigned windows_tokens = rows / heads;
+	unsigned channels = heads * 32u;
+	unsigned row = 0x1000u | 0x20000u | (vit ? 0x80000u : 0u);  /* COSINE_PUBLISH, qkv gather */
+	int base = g.ncmd;
+	if (xmx_rec_row(row, source, source, q, scale, rows, tokens, heads, 1, 0, 0.0f)
+	    || xmx_rec_row(row | (1u << 18), source, source, k, source, rows, tokens, heads, 0, 0,
+			   0.0f))
+		return -1;
+	/* SPLIT_HEADS (10), part 2, E4M3 publish into half */
+	if (xmx_rec_unary(10u | (1u << 8) | 0x1000u, source, source, v, source,
+			  windows_tokens * channels, channels, 1.0f, heads, tokens, 2u, 0, 0))
+		return -1;
+	return wrap_composed(base, PK(PK_GEMM, 0));
+}
+/* Window attention as the passes it replaces (test_window_attention.py's reference): QK^T
+ * into float32 scores, the bit-affine softmax (with the per-head bias) into half, PV into
+ * the float32 context, and for `merged` the head merge with the E4M3 publish into half.
+ * ponytail: scores, probabilities and context go through device memory; one kernel
+ * keeping them on-chip is P3. */
+int xmx_rec_window_attention(int q, int k, int v, int bias, int out, unsigned batches,
+			     unsigned heads, unsigned merged)
+{
+	if (merged > 1u || !batches || !heads || batches % heads)
+		return fail("invalid attention batch/head count");
+	if (!slot(q) || !slot(k) || !slot(v) || !slot(out) || (bias >= 0 && !slot(bias)))
+		return fail("window attention operand is not a live buffer");
+	int scores = scratch(SCR_SCORES, (unsigned long long)batches * 4096u * 4u);
+	int probs = scores < 0 ? -1 : scratch(SCR_PROBS, (unsigned long long)batches * 4096u * 2u);
+	int ctx = !merged ? out : probs < 0 ? -1
+		: scratch(SCR_CTX, (unsigned long long)batches * 2048u * 4u);
+	if (scores < 0 || probs < 0 || ctx < 0)
+		return -1;
+	int base = g.ncmd;
+	if (xmx_rec_gemm(q, k, scores, 64, 64, 32, batches, 2048, 2048, 4096, 1u, 0, 0, 0, 0, 0, 0))
+		return -1;
+	unsigned soft = 1u | 0x1000u | (bias >= 0 ? 0x2000u : 0u);       /* SOFTMAX, half out */
+	if (xmx_rec_row(soft, scores, bias >= 0 ? bias : scores, probs, scores, batches * 64u, 64,
+			heads, 0, 0, 0.0f))
+		return -1;
+	if (xmx_rec_gemm(probs, v, ctx, 64, 32, 64, batches, 4096, 2048, 2048, 0, 0, 0, 0, 0, 0, 0))
+		return -1;
+	if (!merged)
+		return wrap_composed(base, PK(PK_ROW, 3));
+	/* MERGE_HEADS (11), E4M3 publish into half: (window, token, head, 32) */
+	if (xmx_rec_unary(11u | (1u << 8) | 0x1000u, ctx, ctx, out, ctx, batches * 2048u,
+			  heads * 32u, 1.0f, heads, 64, 0, 0, 0))
+		return -1;
+	return wrap_composed(base, PK(PK_ROW, 3));
+}
+/* The fused feed-forward as the two GEMMs it replaces: the expand with the gate and E4M3
+ * publish into a half hidden buffer, then the projection (with the residual when there is
+ * one). Bit-identical to the reference by construction. ponytail: the hidden layer goes
+ * through device memory; fusing it into one kernel is P3 in docs/opencl-port.md. */
+int xmx_rec_ffn(int a, int expand, int projection, int out, int skip, int cosine,
+		unsigned M, unsigned cin, unsigned hidden, unsigned groups, unsigned flags)
+{
+	if (!cin || cin % 16u || !hidden || hidden % 32u || !M || M % 16u || !groups)
+		return fail("fused feed-forward needs channels a multiple of 16, hidden of 32, 16-row blocks");
+	if (flags & ~0x41f00u)
+		return fail("fused feed-forward takes an epilogue, a half output and a half skip only");
+	int residual = skip >= 0 || cosine >= 0;
+	if (residual && (groups != 1u || cin != 32u || skip < 0 || cosine < 0))
+		return fail("the fused residual is for one group of 32 channels, with skip and cosine");
+	if (!residual && (flags & 0x40000u))
+		return fail("a half skip without a residual");
+	if (!slot(a) || !slot(expand) || !slot(projection) || !slot(out)
+	    || (residual && (!slot(skip) || !slot(cosine))))
+		return fail("fused feed-forward operand is not a live buffer");
+	int hid = scratch(SCR_HIDDEN, (unsigned long long)M * groups * hidden * 2u);
+	if (hid < 0)
+		return -1;
+	int base = g.ncmd;
+	if (xmx_rec_gemm(a, expand, hid, M, hidden, cin, groups, 0, cin * hidden, hidden,
+			 (3u << 8) | 0x1000u, 0, 0, groups * hidden, 0, 0, 0))
+		return -1;
+	if (residual) {
+		if (xmx_rec_gemm_residual(hid, projection, out, skip, cosine, M, 32u, hidden, flags))
+			return -1;
+		return wrap_composed(base, PK(PK_GEMM, 31));
+	}
+	if (xmx_rec_gemm(hid, projection, out, M, 32u, hidden, groups, hidden, hidden * 32u, 32u,
+			 flags & 0x1f00u, groups * hidden, 0, groups * 32u, 0, 0, 0))
+		return -1;
+	return wrap_composed(base, PK(PK_GEMM, 31));
+}
+
+/* Block 70: UPSAMPLE_MERGE (float32 and published half), then the feed-forward on them. */
+int xmx_rec_ffn_merge(int source, int skip, int sincos, int expand, int projection, int out,
+		      int cosine, unsigned height, unsigned width, unsigned source_width,
+		      unsigned flags)
+{
+	unsigned M = height * width;
+	if (!M || M % 16u || height % 2u || width % 2u || source_width < width / 2u)
+		return fail("the merged feed-forward needs an even extent in 16-row blocks");
+	if (flags & ~0x1f00u)
+		return fail("the merged feed-forward takes an epilogue and a half output only");
+	if (!slot(source) || !slot(skip) || !slot(sincos))
+		return fail("merged feed-forward operand is not a live buffer");
+	int m32 = scratch(SCR_MADE32, (unsigned long long)M * 32u * 4u);
+	int m16 = scratch(SCR_MADE16, (unsigned long long)M * 32u * 2u);
+	if (m32 < 0 || m16 < 0)
+		return -1;
+	int base = g.ncmd;
+	if (xmx_rec_unary2(20u | 0x8000u | 0x10000u, source, skip, m32, sincos, m16, M * 32u, 32u,
+			   1.0f, 0, width, source_width, 0, 0))
+		return -1;
+	if (xmx_rec_ffn(m16, expand, projection, out, m32, cosine, M, 32u, 128u, 1u, flags))
+		return -1;
+	return wrap_composed(base, PK(PK_GEMM, 31));
+}
+
+/* Block 0: the stem through gemm_dual, then the feed-forward on it. */
+int xmx_rec_ffn_stem(int features, int adapter, int expand, int projection, int out,
+		     int cosine, unsigned M, unsigned flags)
+{
+	if (!M || M % 16u)
+		return fail("the stem feed-forward needs 16-row blocks");
+	if (flags & ~0x1f00u)
+		return fail("the stem feed-forward takes an epilogue and a half output only");
+	int m32 = scratch(SCR_MADE32, (unsigned long long)M * 32u * 4u);
+	int m16 = scratch(SCR_MADE16, (unsigned long long)M * 32u * 2u);
+	if (m32 < 0 || m16 < 0)
+		return -1;
+	int base = g.ncmd;
+	if (xmx_rec_gemm_dual(features, adapter, m32, m16, M, 32u, 16u))
+		return -1;
+	if (xmx_rec_ffn(m16, expand, projection, out, m32, cosine, M, 32u, 128u, 1u, flags))
+		return -1;
+	return wrap_composed(base, PK(PK_GEMM, 31));
+}
+/* Block 0's window residual with both readers: the window residual GEMM into float32,
+ * then pool2_skip of it - what `gemm_residual(reverse)` followed by `pool2_skip` write.
+ * ponytail: the float32 output goes through device memory; one epilogue kernel is P3. */
+int xmx_rec_gemm_window_residual_pool(int a, int b, int skip_out, int skip, int cosine,
+				      int pooled, unsigned M, unsigned N, unsigned K,
+				      unsigned flags, unsigned height, unsigned width,
+				      unsigned across, unsigned pad)
+{
+	if (!slot(a) || !slot(b) || !slot(skip_out) || !slot(skip) || !slot(cosine)
+	    || !slot(pooled))
+		return fail("window residual pool operand is not a live buffer");
+	if (!height || !width || height % 2u || width % 2u || N != 32u)
+		return fail("the pooled window residual needs even extents and 32 channels");
+	unsigned pixels = height * width;
+	int raw = scratch(SCR_PROJ, (unsigned long long)pixels * N * 4u);
+	if (raw < 0)
+		return -1;
+	unsigned residual = flags & 0x40000u;   /* skip_half rides in the frame's own bit */
+	int base = g.ncmd;
+	if (xmx_rec_gemm_window_residual(a, b, raw, skip, cosine, M, N, K, residual,
+					 height, width, across, pad))
+		return -1;
+	/* POOL2_SKIP (22), E4M3 publish into half `pooled`, e4m3_half into `skip_out` */
+	if (xmx_rec_unary2(22u | (1u << 8) | 0x1000u, raw, raw, pooled, raw, skip_out,
+			   pixels / 4u * N, N, 1.0f, 0, height, width, 0, 0))
+		return -1;
+	return wrap_composed(base, PK(PK_GEMM, 31));
+}
+/* A 32-channel window block's attention half as the three passes it replaces:
+ * gemm_qkv_window, merged window attention, and the window residual - or, for the head,
+ * the residual and the compact head GEMM. See xmxres.window_block. */
+int xmx_rec_window_block(int image, int qkv, int projection, int target, int bias, int cosine,
+			 int scale, int extra, unsigned windows, unsigned height, unsigned width,
+			 unsigned across, unsigned pad, unsigned flags)
+{
+	if (!windows || !height || !width || !across)
+		return fail("invalid window block geometry");
+	if (!slot(image) || !slot(qkv) || !slot(projection) || !slot(target) || !slot(bias)
+	    || !slot(cosine) || !slot(scale))
+		return fail("window block operand is not a live buffer");
+	unsigned image_half = (flags & 0x8000u) != 0u;
+	unsigned narrow = (flags & 0x1000u) != 0u;
+	unsigned epilogue = (flags >> 8) & 0xFu;
+	unsigned pooled = (flags & 0x800000u) != 0u;
+	unsigned head = (flags & 0x1000000u) != 0u;
+	unsigned head16 = (flags & 0x2000000u) != 0u;
+	if (pooled && head)
+		return fail("the window block pools or takes the head, not both");
+	if ((head || pooled) && extra < 0)
+		return fail("the window block's pool or head output is missing");
+	unsigned rows = windows * 64u;
+	unsigned pixels = height * width;
+	if (rows % 16u)
+		return fail("the window block needs 16-row blocks");
+	if (pooled && (height % 2u || width % 2u))
+		return fail("the pooled window block needs even extents");
+	int q = scratch(SCR_Q, (unsigned long long)rows * 32u * 2u);
+	int k = q < 0 ? -1 : scratch(SCR_K, (unsigned long long)rows * 32u * 2u);
+	int v = k < 0 ? -1 : scratch(SCR_V, (unsigned long long)rows * 32u * 2u);
+	int att = v < 0 ? -1 : scratch(SCR_ATT, (unsigned long long)rows * 32u * 2u);
+	if (att < 0)
+		return -1;
+	/* image_mode: bit 0 a half image, bit 1 the image published to E4M3 as it is loaded */
+	unsigned image_mode = 2u | (image_half ? 1u : 0u);
+	int base = g.ncmd;
+	if (xmx_rec_gemm_qkv_window(image, qkv, q, k, v, scale, rows, 32u, 1u, 64u, width, height,
+				    across, pad, image_mode)
+	    || xmx_rec_window_attention(q, k, v, bias, att, windows, 1u, 1u))
+		return -1;
+	unsigned residual = (epilogue << 8) | (narrow ? 0x1000u : 0u) | (image_half ? 0x40000u : 0u);
+	if (pooled) {
+		if (xmx_rec_gemm_window_residual_pool(
+			    att, projection, target, image, cosine, extra, rows, 32u, 32u,
+			    (image_half ? 0x40000u : 0u), height, width, across, pad))
+			return -1;
+		return wrap_composed(base, PK(PK_ROW, 4));
+	}
+	if (!head) {
+		if (xmx_rec_gemm_window_residual(att, projection, target, image, cosine, rows,
+						 32u, 32u, residual, height, width, across, pad))
+			return -1;
+		return wrap_composed(base, PK(PK_ROW, 4));
+	}
+	/* Block 70: the residual into half `out16`, then the compact head GEMM on it. */
+	int out16 = scratch(SCR_OUT16, (unsigned long long)pixels * 32u * 2u);
+	if (out16 < 0)
+		return -1;
+	if (xmx_rec_gemm_window_residual(att, projection, out16, image, cosine, rows, 32u, 32u,
+					 0x1000u | (image_half ? 0x40000u : 0u), height, width,
+					 across, pad))
+		return -1;
+	/* N is always 16; compact stores the first four columns (ldc 4), the wide build all
+	 * sixteen (ldc 16). See xmxres.gemm compact_output. */
+	if (xmx_rec_gemm(out16, extra, target, pixels, 16u, 32u, 1, 0, 0, 0,
+			 head16 ? 0u : (1u << 16), 0, 0, head16 ? 0u : 4u, 0, 0, 0))
+		return -1;
+	return wrap_composed(base, PK(PK_ROW, 4));
+}
+/* A bottleneck block's attention as the four passes it replaces (test_global_attention.py):
+ * QK^T, the ViT's softmax with its reciprocals, PV, and the scaled head merge with the
+ * E4M3 publish. ponytail: intermediates in device memory; one on-chip kernel is P3. */
+int xmx_rec_global_attention(int q, int k, int v, int merged, unsigned rows, unsigned tokens,
+			     unsigned heads)
+{
+	if (!rows || rows % 16u || !tokens || tokens > rows || !heads
+	    || (rows + 63u) / 64u != (tokens + 63u) / 64u)
+		return fail("global attention needs rows a multiple of 16 within the tokens' 64-block");
+	if (!slot(q) || !slot(k) || !slot(v) || !slot(merged))
+		return fail("global attention operand is not a live buffer");
+	unsigned long long sq = (unsigned long long)heads * rows * rows;
+	int scores = scratch(SCR_SCORES, sq * 4u);
+	int probs = scores < 0 ? -1 : scratch(SCR_PROBS, sq * 2u);
+	int recip = probs < 0 ? -1 : scratch(SCR_RECIP, (unsigned long long)heads * rows * 4u);
+	int ctx = recip < 0 ? -1 : scratch(SCR_CTX, (unsigned long long)heads * rows * 32u * 4u);
+	if (ctx < 0)
+		return -1;
+	int base = g.ncmd;
+	if (xmx_rec_gemm(q, k, scores, rows, rows, 32, heads, rows * 32u, rows * 32u, rows * rows,
+			    1u, 0, 0, 0, 0, 0, 0)
+	    || xmx_rec_row(6u | 0x1000u, scores, scores, probs, recip, heads * rows, tokens, 0, 0,
+			   rows, 0.0f)                                  /* VIT_SOFTMAX */
+	    || xmx_rec_gemm(probs, v, ctx, rows, 32, rows, heads, rows * rows, rows * 32u,
+			    rows * 32u, 0, 0, 0, 0, 0, 0, 0))
+		return -1;
+	/* MERGE_HEADS (11) scaled by the reciprocals, E4M3 publish into half */
+	if (xmx_rec_unary(11u | 0x20000u | (1u << 8) | 0x1000u, ctx, ctx, merged, recip,
+			  rows * heads * 32u, heads * 32u, 1.0f, heads, rows, 0, 0, 0))
+		return -1;
+	return wrap_composed(base, PK(PK_ROW, 5));
+}
 int xmx_rec_gemm_int8(int a, int b, int c, int a_scale, int b_scale, unsigned M, unsigned N, unsigned K, unsigned flags)
 { (void)a;(void)b;(void)c;(void)a_scale;(void)b_scale;(void)M;(void)N;(void)K;(void)flags; return fail("gemm_int8: not implemented yet"); }
 
 /* ---- profiling -------------------------------------------------------------------- */
-int xmx_profile(int on) { (void)on; return 0; }
-void xmx_profile_reset(void) {}
-double xmx_profile_ms(unsigned kind) { (void)kind; return 0.0; }
-unsigned xmx_profile_count(unsigned kind) { (void)kind; return 0; }
-unsigned xmx_profile_each_count(void) { return 0; }
-double xmx_profile_each_ms(unsigned i) { (void)i; return 0.0; }
-unsigned xmx_profile_each_kind(unsigned i) { (void)i; return 0; }
+/* The table libxmx exposes: per-kind device milliseconds and hit counts read from the
+ * cl_event timestamps, plus the flat per-dispatch list. A kind is family * 32 + subkind,
+ * the same numbering libxmx uses, so frame_profile.py/iterate.sh read either backend. */
+int xmx_profile(int on)
+{
+	if (on && !g.prof) {
+		if (!g.q)
+			return -1;
+		if (!g.qprof) {
+			clFinish(g.q);
+			cl_int err = 0;
+			cl_command_queue q = clCreateCommandQueue(g.ctx, g.dev, CL_QUEUE_PROFILING_ENABLE, &err);
+			if (!q)
+				return fail("profile: clCreateCommandQueue: %d", err);
+			clReleaseCommandQueue(g.q);
+			g.q = q;
+			g.qprof = 1;
+		}
+		if (!g_trace) {
+			g_trace = malloc(sizeof(*g_trace) * MAX_CMD);
+			if (!g_trace)
+				return fail("profile: out of memory");
+		}
+		g.prof = 1;
+	} else if (!on) {
+		g.prof = 0;
+	}
+	return 0;
+}
+
+void xmx_profile_reset(void)
+{
+	memset(prof_ms, 0, sizeof prof_ms);
+	memset(prof_hits, 0, sizeof prof_hits);
+	prof_each_n = 0;
+}
+
+double xmx_profile_ms(unsigned kind) { return kind < PROF_KINDS ? prof_ms[kind] : 0.0; }
+unsigned xmx_profile_count(unsigned kind) { return kind < PROF_KINDS ? prof_hits[kind] : 0; }
+unsigned xmx_profile_each_count(void) { return (unsigned)prof_each_n; }
+double xmx_profile_each_ms(unsigned i) { return i < (unsigned)prof_each_n ? prof_each[i] : 0.0; }
+unsigned xmx_profile_each_kind(unsigned i) { return i < (unsigned)prof_each_n ? prof_each_kind[i] : 0u; }

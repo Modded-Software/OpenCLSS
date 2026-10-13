@@ -135,8 +135,9 @@ class GlobalScratch:
             padded = xmxres.align(tokens, 64)
         self.tokens, self.padded = tokens, padded
         padded, hidden = self.padded, weights.hidden_width
+
         make = (arena.buffer if arena is not None else
-                lambda name, count, dtype=np.float32: runtime.buffer(count, dtype))
+                lambda name, count, dtype=np.float32: runtime.buffer(count, dtype).zero())
         self.value = make("global.value", padded * channels).zero()
         # The chain's value as half, between the blocks and through them (`chain` in
         # record_global_block). Its pad rows are zero from here on and never written.
@@ -342,10 +343,9 @@ class BlockScratch:
 
         if getattr(weights, "split", False):
             hidden = weights.groups * 256
-        # Every buffer a block wrote in float32 only to read it straight back went
-        # away when the publishes moved into the pass that produces the value.
+        # no arena: ours to clear (a read-only pad must not see the driver's fresh allocation)
         make = (arena.buffer if arena is not None else
-                lambda name, count, dtype=np.float32: runtime.buffer(count, dtype))
+                lambda name, count, dtype=np.float32: runtime.buffer(count, dtype).zero())
         self.value = make("value", pixels * channels)
         self.value16 = make("value16", pixels * channels, np.float16)
         self.hidden16 = make("hidden16", pixels * hidden, np.float16)
@@ -744,7 +744,7 @@ class TransitionScratch:
 
     def __init__(self, runtime, elements, half_elements, arena=None):
         make = (arena.buffer if arena is not None else
-                lambda name, count, dtype=np.float32: runtime.buffer(count, dtype))
+                lambda name, count, dtype=np.float32: runtime.buffer(count, dtype).zero())
         # `padded` holds whichever width its source has, so it is sized for float32
         self.padded = make("transition.padded", elements)
         self.pooled16 = make("transition.pooled16", elements, np.float16)

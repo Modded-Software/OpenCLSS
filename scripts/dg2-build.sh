@@ -19,5 +19,6 @@ P=$DEPS/png/usr
 rm -f work/nr_frame.o
 make -j16 LAYER32=0 CC=/usr/bin/gcc \
   PNG_CFLAGS="-I$P/include/libpng16" \
-  PNG_LIBS="$P/lib/x86_64-linux-gnu/libpng16.a -lz"
+  PNG_LIBS="$P/lib/x86_64-linux-gnu/libpng16.a -lz" \
+  all work/libopenclmx.so
 echo MAKE_DONE
