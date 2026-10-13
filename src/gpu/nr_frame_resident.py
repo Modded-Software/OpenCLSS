@@ -35,6 +35,7 @@ sys.path.insert(0, str(HERE.parent / "ref"))
 import nr_model  # noqa: E402
 import nr_resident as R  # noqa: E402
 import xmxres  # noqa: E402
+from nr_frame_weights import DeviceWeights, Edge, WEIGHT_NAMES  # noqa: E402, F401
 try:
     import nr_image  # noqa: E402  the host passes in C, when they are built
 except ImportError:  # pragma: no cover
@@ -80,88 +81,12 @@ class _HeadLease:
 _LEASES = sys.version_info >= (3, 12)       # PEP 688: a buffer exporter written in Python
 
 
-class Edge:
-    """A transition's weights: a projection and, for the decoder, a skip scale."""
-
-    def __init__(self, runtime, weight, sine=None):
-        self.weight0 = runtime.buffer_from(weight, np.float16)
-        self.out_channels = weight.shape[1]
-        self.sine = None if sine is None else runtime.buffer_from(sine)
-
-
-class DeviceWeights:
-    """Every weight buffer, and nothing that depends on the extent.
-
-    They used to be the frame's, and a frame belongs to one extent - so moving the render
-    scale rebuilt them, ~292 MB written again for a knob. Nothing in them knows the extent:
-    blocks are keyed by index, edges by index and direction. So they live here, one set per
-    backend, and a new extent rebuilds the graph and its scratch alone.
-    """
-
-    def __init__(self, runtime, weights):
-        self.rt, self.weights = runtime, weights
-        self._blocks, self._edges = {}, {}
-        self._upload_edges()
-
-    def _upload_edges(self):
-        take = lambda name: self.weights[name]
-        self.adapter = self.rt.buffer_from(take("block0.layer0.input_adapter_weight"),
-                                           np.float16)
-        self.bottleneck = Edge(self.rt, take("block30.layer4.weight"))
-        self.decoder_input = Edge(self.rt, take("block39.layer0.conv_weight"),
-                                  take("block39.layer0.inp_upsample_sin"))
-        self.merge_sin = self.rt.buffer_from(take("block70.layer0.inp_merge_sin"))
-        self.merge_cos = self.rt.buffer_from(take("block70.layer0.inp_merge_cos"))
-        # both, one after the other, for the pass that applies them together: a prepared
-        # file carries them joined (nr_frame_prepare), else they are joined here
-        sincos = self.weights.get("block70.layer0.inp_merge_sincos")
-        if sincos is None:
-            sincos = np.concatenate([
-                np.asarray(take("block70.layer0.inp_merge_sin"), np.float32).reshape(-1),
-                np.asarray(take("block70.layer0.inp_merge_cos"), np.float32).reshape(-1)])
-        self.merge_sincos = self.rt.buffer_from(sincos)
-        # the head is 32 -> 4, and the cooperative matrix wants a multiple of 16
-        # columns; both halves go into one padded matrix and the first four columns
-        # of the product are the head - a prepared file carries the matrix
-        head = self.weights.get("block70.layer0.head_matrix")
-        if head is None:
-            head = np.zeros((32, 16), dtype=np.float32)
-            head[:16, :4] = take("block70.layer0.out_gain")
-            head[16:, :4] = take("block70.layer0.out_conv_weight")
-        self.head = self.rt.buffer_from(head, np.float16)
-
-    def block(self, index, heads, family="window"):
-        if (index, family) not in self._blocks:
-            builder = {"split": lambda: R.SplitBlockWeights(self.rt, self.weights, index),
-                       "global": lambda: R.GlobalBlockWeights(self.rt, self.weights, index),
-                       "window": lambda: R.BlockWeights(self.rt, self.weights, index,
-                                                        heads=heads)}[family]
-            self._blocks[(index, family)] = builder()
-        return self._blocks[(index, family)]
-
-    def edge(self, index, kind):
-        if (index, kind) not in self._edges:
-            prefix = f"block{index}.layer0"
-            self._edges[(index, kind)] = Edge(
-                self.rt, self.weights[f"{prefix}.weight0"],
-                self.weights.get(f"{prefix}.sin") if kind == "up" else None)
-        return self._edges[(index, kind)]
-
-    def close(self):
-        self._blocks.clear()
-        self._edges.clear()
-        for name in ResidentFrame.WEIGHT_NAMES:
-            if hasattr(self, name):
-                delattr(self, name)
-
-
 class ResidentFrame:
     """The graph and its buffers, for one network extent. The weights are shared."""
 
     # the six named weight buffers live on `DeviceWeights` now; the body of a frame still
     # says `self.adapter`, because where they are kept is not that code's business
-    WEIGHT_NAMES = ("adapter", "bottleneck", "decoder_input", "merge_sin", "merge_cos",
-                    "merge_sincos", "head")
+    WEIGHT_NAMES = WEIGHT_NAMES
 
     def __getattr__(self, name):
         if name in ResidentFrame.WEIGHT_NAMES:
@@ -183,6 +108,11 @@ class ResidentFrame:
         self._planned = None      # what the arena was planned for: `_prepare_scratch`
         self._closed = False
         self._head_free = []      # host blocks a returned head was in and nobody holds now
+        # Deep-level caching (notes/phase76): run the 16h-32h half on every Nth frame and
+        # reuse its d5 on the frames between. 0 or 1 = off.
+        self._deep_n = int(os.environ.get("NR_DEEP_CACHE", "0"))
+        self._deep_tick = 0
+        self._deep_ready = False
 
     @staticmethod
     def _plan(height, width):
@@ -366,7 +296,16 @@ class ResidentFrame:
             execution = "block"
         batched = execution != "block"
         staged = rt.staging
-        key = rt.graph_key()
+        # Deep-level caching: the 16h-32h half runs only on a refresh frame, and its d5
+        # is reused on the frames between. A dry run always takes the full path, so the
+        # scratch plan still sees every role.
+        deep = self._deep_n
+        refresh = dry or deep <= 1 or not self._deep_ready or self._deep_tick % deep == 0
+        key = (rt.graph_key(), refresh)
+        # Counted here, not at the end: the replay fast path below returns before the end,
+        # and a frozen counter would pin every later frame to one cache phase.
+        if not dry:
+            self._deep_tick += 1
         recording = False
 
         def begin():
@@ -527,83 +466,100 @@ class ResidentFrame:
 
         # the split family, then the bottleneck
         h, w, channels = self.levels[5]
-        stage[0] = "split blocks 23-30 (C=512)"
-        # Block 30's output has two readers: the decoder's skip takes it published, the
-        # bottleneck's pool raw (notes/opendlss-reference.md).
-        raw30 = self.buffer("raw30", h * w * channels)
-        for index in range(23, 31):
-            block = self.block(index, 16, "split")
-            last = index == 30
+        # Deep-level caching (notes/phase76): everything from here to the end of blocks
+        # 40-47 is the 16h-32h half - the frame's most expensive part and the part of a
+        # temporal model that changes slowest. On a non-refresh frame, reuse the d5 the
+        # last full pass left, and record none of it.
+        deep_cache = (self.buffer("d5_cache", h * w * channels, np.float16)
+                      if deep > 1 else None)
+        if not refresh:
+            value = self.buffer("d5", h * w * channels, np.float16)
             begin()
-            R.record_block(rt, block, self.scratch(block, h, w), source=value,
-                           target=raw30 if last else value,
-                           publish=0 if last else xmxres.EPI_E4M3,
-                           source_half=True, target_half=not last)
-            if last:
-                rt.e4m3_half(raw30, value, h * w * channels)
+            rt.copy(deep_cache, value, h * w * channels * 2)
             submit()
-        keep("l5", value, h * w * channels, (1, h, w, channels), np.float16)
-        # l5 itself is the skip, as for the levels above: the decoder input merge below
-        # writes d5 rather than l5, which is what the copy was protecting.
-        split_skip = value
-
-        gh, gw, gchannels = self.levels[6]
-        tokens = gh * gw
-        # With the glue fused the eight blocks run in their scratch's half value itself
-        # (`record_global_block`, `chain`), and the downsample writes it.
-        chain = rt.fuse_glue
-        deep = (self.scratch(self.block(31, 32, "global"), gh, gw, tokens=tokens).io16
-                if chain else self.buffer("l6", gh * gw * gchannels, np.float16))
-        begin()
-        # pooled raw and published before its GEMM, as the encoder's transitions are
-        R.record_downsample(rt, self.bottleneck, self.transition_scratch(
-            pad8(h) * pad8(w) * channels), raw30, deep, h, w, channels, pad_to=8,
-            target_half=True)
-        submit()
-
-        stage[0] = "global blocks 31-38 (C=1024)"
-        for index in range(31, 39):
-            block = self.block(index, 32, "global")
-            scratch = self.scratch(block, gh, gw, tokens=tokens)
-            begin()
-            if chain:
-                R.record_global_block(rt, block, scratch, chain=True)
+        else:
+            stage[0] = "split blocks 23-30 (C=512)"
+            # Block 30's output has two readers: the decoder's skip takes it published, the
+            # bottleneck's pool raw (notes/opendlss-reference.md).
+            raw30 = self.buffer("raw30", h * w * channels)
+            for index in range(23, 31):
+                block = self.block(index, 16, "split")
+                last = index == 30
+                begin()
+                R.record_block(rt, block, self.scratch(block, h, w), source=value,
+                               target=raw30 if last else value,
+                               publish=0 if last else xmxres.EPI_E4M3,
+                               source_half=True, target_half=not last)
+                if last:
+                    rt.e4m3_half(raw30, value, h * w * channels)
                 submit()
-                continue
-            # Published values are exact in both widths. Convert on-device when
-            # batching; the block mode retains the original host-copy reference.
-            if batched or staged:
-                rt.from_half(deep, scratch.value, tokens * gchannels)
-            else:
-                scratch.value.view()[:tokens * gchannels] = \
-                    deep.view(np.float16)[:tokens * gchannels]
-            R.record_global_block(rt, block, scratch)
-            rt.e4m3(scratch.out, scratch.out, scratch.padded * gchannels)
-            if batched or staged:
-                rt.to_half(scratch.out, deep, tokens * gchannels)
-            submit()
-            if not batched and not staged:
-                deep.view(np.float16)[:tokens * gchannels] = \
-                    scratch.out.view()[:tokens * gchannels]
+            keep("l5", value, h * w * channels, (1, h, w, channels), np.float16)
+            # l5 itself is the skip, as for the levels above: the decoder input merge below
+            # writes d5 rather than l5, which is what the copy was protecting.
+            split_skip = value
 
-        keep("l6", deep, tokens * gchannels, (1, gh, gw, gchannels), np.float16)
-
-        # the decoder input merge, then the split family again
-        value = self.buffer("d5", h * w * channels, np.float16)
-        begin()
-        R.record_upsample_merge(rt, self.decoder_input, self.transition_scratch(
-            h * w * channels), deep, split_skip, value, gh, gw, h, w, gchannels, channels,
-            source_half=True, skip_half=True, target_half=True)
-        submit()
-        stage[0] = "split blocks 40-47 (C=512)"
-        for index in range(40, 48):
-            block = self.block(index, 16, "split")
+            gh, gw, gchannels = self.levels[6]
+            tokens = gh * gw
+            # With the glue fused the eight blocks run in their scratch's half value itself
+            # (`record_global_block`, `chain`), and the downsample writes it.
+            chain = rt.fuse_glue
+            deep_buf = (self.scratch(self.block(31, 32, "global"), gh, gw, tokens=tokens).io16
+                        if chain else self.buffer("l6", gh * gw * gchannels, np.float16))
             begin()
-            R.record_block(rt, block, self.scratch(block, h, w), source=value,
-                           target=value, publish=xmxres.EPI_E4M3,
-                           source_half=True, target_half=True)
+            # pooled raw and published before its GEMM, as the encoder's transitions are
+            R.record_downsample(rt, self.bottleneck, self.transition_scratch(
+                pad8(h) * pad8(w) * channels), raw30, deep_buf, h, w, channels, pad_to=8,
+                target_half=True)
             submit()
-        keep("d5", value, h * w * channels, (1, h, w, channels), np.float16)
+
+            stage[0] = "global blocks 31-38 (C=1024)"
+            for index in range(31, 39):
+                block = self.block(index, 32, "global")
+                scratch = self.scratch(block, gh, gw, tokens=tokens)
+                begin()
+                if chain:
+                    R.record_global_block(rt, block, scratch, chain=True)
+                    submit()
+                    continue
+                # Published values are exact in both widths. Convert on-device when
+                # batching; the block mode retains the original host-copy reference.
+                if batched or staged:
+                    rt.from_half(deep_buf, scratch.value, tokens * gchannels)
+                else:
+                    scratch.value.view()[:tokens * gchannels] = \
+                        deep_buf.view(np.float16)[:tokens * gchannels]
+                R.record_global_block(rt, block, scratch)
+                rt.e4m3(scratch.out, scratch.out, scratch.padded * gchannels)
+                if batched or staged:
+                    rt.to_half(scratch.out, deep_buf, tokens * gchannels)
+                submit()
+                if not batched and not staged:
+                    deep_buf.view(np.float16)[:tokens * gchannels] = \
+                        scratch.out.view()[:tokens * gchannels]
+
+            keep("l6", deep_buf, tokens * gchannels, (1, gh, gw, gchannels), np.float16)
+
+            # the decoder input merge, then the split family again
+            value = self.buffer("d5", h * w * channels, np.float16)
+            begin()
+            R.record_upsample_merge(rt, self.decoder_input, self.transition_scratch(
+                h * w * channels), deep_buf, split_skip, value, gh, gw, h, w, gchannels,
+                channels, source_half=True, skip_half=True, target_half=True)
+            submit()
+            stage[0] = "split blocks 40-47 (C=512)"
+            for index in range(40, 48):
+                block = self.block(index, 16, "split")
+                begin()
+                R.record_block(rt, block, self.scratch(block, h, w), source=value,
+                               target=value, publish=xmxres.EPI_E4M3,
+                               source_half=True, target_half=True)
+                submit()
+            keep("d5", value, h * w * channels, (1, h, w, channels), np.float16)
+            if deep_cache is not None:
+                begin()
+                rt.copy(value, deep_cache, h * w * channels * 2)
+                submit()
+                self._deep_ready = True
 
         for transition, regular, skip_level, heads in DECODER:
             stage[0] = f"decoder upsample -> L{skip_level}"

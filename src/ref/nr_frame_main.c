@@ -308,6 +308,31 @@ static int compare_long(const void *a, const void *b)
     return (x > y) - (x < y);
 }
 
+static int compare_double(const void *a, const void *b)
+{
+    double x = *(const double *)a, y = *(const double *)b;
+    return (x > y) - (x < y);
+}
+
+/* The frame's own cost over the run: mean, median and extremes, and the fps they imply.
+ * `elapsed_ms` is the graph time only - PNG read and write sit outside `run_ms` and are
+ * not what a game pays - so this is the frame rate the model can sustain, not the replay's. */
+static void report_frame_times(const double *ms, size_t count)
+{
+    if (!count) return;
+    double *sorted = malloc(count * sizeof *sorted), total = 0;
+    if (!sorted) return;
+    for (size_t i = 0; i < count; i++) { sorted[i] = ms[i]; total += ms[i]; }
+    qsort(sorted, count, sizeof *sorted, compare_double);
+    double mean = total / (double)count;
+    double median = (count & 1) ? sorted[count / 2] : 0.5 * (sorted[count / 2 - 1] + sorted[count / 2]);
+    double p95 = sorted[(size_t)(0.95 * (double)(count - 1))];
+    printf("  summary %zu frames  mean %.2f ms (%.2f fps)  median %.2f ms (%.2f fps)"
+           "  min %.2f  p95 %.2f  max %.2f  graph time, excludes PNG I/O\n",
+           count, mean, 1e3 / mean, median, 1e3 / median, sorted[0], p95, sorted[count - 1]);
+    free(sorted);
+}
+
 /* Each entry of `dir` through `visit`; 0 when the folder could be read. */
 static int list_dir(const char *dir, void (*visit)(const char *name, void *context), void *context)
 {
@@ -383,6 +408,7 @@ static int replay(nr_frame *frame, const nr_frame_params *p, const nr_frame_live
            source, out, (unsigned)frames.count, (double)s->render_scale, (double)s->temporal, (double)s->hold,
            (double)s->release, (double)s->cut_limit);
     fflush(stdout);
+    double *samples = malloc(frames.count * sizeof *samples);
     for (size_t k = 0; k < frames.count; k++) {
         char name[64], path[1200];
 #if defined(_WIN32) && __STDC_WANT_SECURE_LIB__
@@ -409,6 +435,7 @@ static int replay(nr_frame *frame, const nr_frame_params *p, const nr_frame_live
             return 1;
         }
         double elapsed = now() - started;
+        if (samples) samples[k] = elapsed * 1e3;
         for (size_t i = 0; i < pixels; i++) {
             shown[i * 3 + 0] = answer[i * 4 + 2]; shown[i * 3 + 1] = answer[i * 4 + 1];
             shown[i * 3 + 2] = answer[i * 4 + 0];
@@ -440,6 +467,7 @@ static int replay(nr_frame *frame, const nr_frame_params *p, const nr_frame_live
         free(rgb); free(bgra); free(answer); free(shown);
     }
     nr_frame_live_close(live);
+    if (samples) { report_frame_times(samples, frames.count); free(samples); }
     free(frames.values);
     return 0;
 }
@@ -477,7 +505,8 @@ static int stream(nr_frame *frame, const nr_frame_params *p, const nr_frame_live
     fflush(stdout);
     nr_frame_live_close(live);
     free(bgra); free(answer);
-    fprintf(stderr, "%ld frames, mean %.1f ms\n", k, k ? total / k : 0.0);
+    fprintf(stderr, "%ld frames, mean %.1f ms (%.2f fps)  graph time, excludes I/O\n",
+            k, k ? total / k : 0.0, k ? 1e3 * k / total : 0.0);
     return 0;
 }
 

@@ -3957,6 +3957,9 @@ int nr_frame_live_run(nr_frame_live *live, const nr_frame_params *params,
     if (!live || !pixels || !answer || width <= 0 || height <= 0)
         FAILF("live_run needs a session, the pixels and somewhere to answer");
     if (!(s.render_scale >= 0.05f && s.render_scale <= 1.0f)) FAILF("render_scale must be between 0.05 and 1");
+    static int split_on = -1;
+    if (split_on < 0) split_on = getenv("NR_LIVE_SPLIT") != NULL;
+    double live_t0 = now();
     bgra = bgra != 0;
     size_t pixels_whole = (size_t)width * height;
     if (live_grow(&live->whole, &live->whole_cap, pixels_whole * 3)) FAILF("out of memory");
@@ -4034,6 +4037,7 @@ int nr_frame_live_run(nr_frame_live *live, const nr_frame_params *params,
     p.hold = history_previous ? s.hold : 0.0f;
     p.slope = history_previous ? (float)(-255.0 * (double)s.hold / 4.0) : 0.0f;    /* HOLD_RAMP */
     p.release = history_previous && s.release > 0.0f ? (float)(-255.0 / (double)s.release) : 0.0f;
+    double live_t1 = now();
 
     if (live_grow(&live->head, &live->head_cap, inner_pixels * 4)
         || live_grow(&live->composed, &live->composed_cap, active * 3)
@@ -4043,6 +4047,7 @@ int nr_frame_live_run(nr_frame_live *live, const nr_frame_params *params,
         live->have = 0;
         return -1;
     }
+    double live_t2 = now();
     if (answer != pixels) memcpy(answer, pixels, pixels_whole * 4);
     if (nr_frame_compose_encode_neural(live->frame, live->head, inner_height, inner_width, colour,
                                        active_height, active_width, history_full, history_previous, NULL,
@@ -4051,6 +4056,12 @@ int nr_frame_live_run(nr_frame_live *live, const nr_frame_params *params,
         live->have = 0;
         return -1;
     }
+    double live_t3 = now();
+    if (split_on)
+        fprintf(stderr, "[LIVE] prefix %.2f head %.2f (write %.2f graph %.2f read %.2f) compose %.2f ms\n",
+                (live_t1 - live_t0) * 1e3, (live_t2 - live_t1) * 1e3,
+                nr_frame_split(live->frame, 0) * 1e3, nr_frame_split(live->frame, 1) * 1e3,
+                nr_frame_split(live->frame, 2) * 1e3, (live_t3 - live_t2) * 1e3);
 
     if (report) {
         double change = 0.0;
