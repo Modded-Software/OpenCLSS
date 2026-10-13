@@ -757,6 +757,35 @@ static const char *GEMM_BLK_SRC =
 "#ifndef RN\n#define RN 2\n#endif\n" \
 "#define QKV_COLS 32\n" \
 "#define QKV_THREADS 16\n" \
+"/* The epilogue reads the 32 staged channels straight from shared memory, so the norm's\n" \
+" * operand never becomes a private array: this kernel already holds the GEMM's\n" \
+" * accumulators, and a float[32] on top of them cost ~7 ms a frame. Same tree, same\n" \
+" * rounding (HROUND is pure, so rounding each read matches rounding once), `__local`. */\n" \
+"#define QKV_HR(i) HROUND(h[i])\n" \
+"inline float cosine_reciprocal_local(__local const float *h) {\n" \
+"    float partial[4][2], two[4][2], one[4][2];\n" \
+"    for (uint lane = 0u; lane < 4u; lane++)\n" \
+"        for (uint parity = 0u; parity < 2u; parity++) {\n" \
+"            uint ch = lane * 2u + parity;\n" \
+"            float first = hfma(QKV_HR(ch + 8u), QKV_HR(ch + 8u), hmul(QKV_HR(ch), QKV_HR(ch)));\n" \
+"            float second = hfma(QKV_HR(ch + 24u), QKV_HR(ch + 24u), hmul(QKV_HR(ch + 16u), QKV_HR(ch + 16u)));\n" \
+"            partial[lane][parity] = hadd(first, second);\n" \
+"        }\n" \
+"    for (uint lane = 0u; lane < 4u; lane++)\n" \
+"        for (uint p = 0u; p < 2u; p++) two[lane][p] = hadd(partial[lane][p], partial[lane ^ 2u][p]);\n" \
+"    for (uint lane = 0u; lane < 4u; lane++)\n" \
+"        for (uint p = 0u; p < 2u; p++) one[lane][p] = hadd(two[lane][p], two[lane ^ 1u][p]);\n" \
+"    float norm = fmax(hadd(one[0][0], one[0][1]), HROUND(COSINE_NORM_FLOOR));\n" \
+"    return HROUND(rsqrt(norm));\n" \
+"}\n" \
+"inline float vit_reciprocal_local(__local const float *h) {\n" \
+"    float r[16];\n" \
+"    for (uint c = 0u; c < 16u; c++) r[c] = hfma(QKV_HR(c), QKV_HR(c), hmul(QKV_HR(c + 16u), QKV_HR(c + 16u)));\n" \
+"    for (uint c = 0u; c < 8u; c++) r[c] = hadd(r[c], r[c + 8u]);\n" \
+"    for (uint c = 0u; c < 4u; c++) r[c] = hadd(r[c], r[c + 4u]);\n" \
+"    float norm = fmax(hadd(hadd(r[0], r[2]), hadd(r[1], r[3])), HROUND(COSINE_NORM_FLOOR));\n" \
+"    return HROUND(1.0f / sqrt(norm));\n" \
+"}\n" \
 "__attribute__((intel_reqd_sub_group_size(8)))\n" \
 "__kernel void gemm_qkv(__global const half *A, __global const half *B,\n" \
 "                       __global half *Q, __global half *Kt, __global half *V,\n" \
@@ -818,13 +847,12 @@ static const char *GEMM_BLK_SRC =
 "            for (unsigned d = 0; d < 32u; d++) V[at + d] = (half)e4m3(stg[lr][d]);\n" \
 "            continue;\n" \
 "        }\n" \
-"        float h[32];\n" \
-"        for (unsigned d = 0; d < 32u; d++) h[d] = HROUND(stg[lr][d]);\n" \
-"        float reciprocal = vit ? vit_reciprocal(h) : cosine_reciprocal(h);\n" \
+"        float reciprocal = vit ? vit_reciprocal_local(stg[lr])\n" \
+"                              : cosine_reciprocal_local(stg[lr]);\n" \
 "        float scale = part == 0u ? HROUND(Scale[head]) : 1.0f;\n" \
 "        __global half *dst = part == 0u ? Q : Kt;\n" \
 "        for (unsigned d = 0; d < 32u; d++) {\n" \
-"            float value = hmul(h[d], reciprocal);\n" \
+"            float value = hmul(HROUND(stg[lr][d]), reciprocal);\n" \
 "            if (part == 0u) value = hmul(vit ? hmul(value, VIT_ROOT) : value, scale);\n" \
 "            value = e4m3(value);\n" \
 "            dst[at + d] = (half)value;\n" \
