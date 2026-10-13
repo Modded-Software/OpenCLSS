@@ -927,7 +927,7 @@ static const char *GEMM_BLK_SRC =
 "            }\n" \
 "        }\n" \
 "    }\n" \
-"    barrier(CLK_LOCAL_MEM_FENCE);\n" \
+"    sub_group_barrier(CLK_LOCAL_MEM_FENCE);\n" \
 "    {\n" \
 "        uint token = 8u * sub + lane;\n" \
 "        float total = 0.0f;\n" \
@@ -944,26 +944,24 @@ static const char *GEMM_BLK_SRC =
 "            sm[token][p] = c.u;\n" \
 "        }\n" \
 "    }\n" \
-"    barrier(CLK_LOCAL_MEM_FENCE);\n" \
+"    sub_group_barrier(CLK_LOCAL_MEM_FENCE);\n" \
 "    {\n" \
 "        float acc[8][4];\n" \
 "        for (uint i = 0u; i < 8u; i++)\n" \
 "            for (uint c = 0u; c < 4u; c++) acc[i][c] = 0.0f;\n" \
-"        for (uint jb = 0u; jb < 64u; jb += 8u) {\n" \
-"            float vv[8][4];\n" \
-"            for (uint jj = 0u; jj < 8u; jj++) {\n" \
+"        for (uint jb = 0u; jb < 64u; jb += 4u) {\n" \
+"            float vv[4][4];\n" \
+"            for (uint jj = 0u; jj < 4u; jj++) {\n" \
 "                float4 t = vload_half4(0, Vb + base + (size_t)(jb + jj) * 32u + 4u * lane);\n" \
 "                vv[jj][0] = t.s0; vv[jj][1] = t.s1; vv[jj][2] = t.s2; vv[jj][3] = t.s3;\n" \
 "            }\n" \
 "            for (uint i = 0u; i < 8u; i++) {\n" \
 "                __local const half *pr = (__local const half *)&sm[8u * sub + i][jb >> 1];\n" \
-"                float8 pv = vload_half8(0, pr);\n" \
+"                float4 pv = vload_half4(0, pr);\n" \
 "                for (uint c = 0u; c < 4u; c++) {\n" \
 "                    float s = acc[i][c];\n" \
 "                    s = mad(pv.s0, vv[0][c], s); s = mad(pv.s1, vv[1][c], s);\n" \
 "                    s = mad(pv.s2, vv[2][c], s); s = mad(pv.s3, vv[3][c], s);\n" \
-"                    s = mad(pv.s4, vv[4][c], s); s = mad(pv.s5, vv[5][c], s);\n" \
-"                    s = mad(pv.s6, vv[6][c], s); s = mad(pv.s7, vv[7][c], s);\n" \
 "                    acc[i][c] = s;\n" \
 "                }\n" \
 "            }\n" \
