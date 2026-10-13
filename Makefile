@@ -81,6 +81,11 @@ STAGED_SG ?= 8
 # the wide staged build's subgroups along M (the rest split its 64 columns)
 # the main staged build's K step. 64 (fewer barriers) measured 40.9 vs 41.4 ms: noise.
 STAGED_BK ?= 32
+# the main staged build's workgroup in 32-lane units (gemm_staged.comp STAGED_WARPS); the
+# 64x32 block is unchanged, fewer lanes give each subgroup more accumulators
+STAGED_WARPS ?= 4
+# B staged N-major and read ColumnMajor (gemm_staged.comp STAGED_BT): -DSTAGED_BT or empty
+STAGED_BT ?=
 STAGED_WIDE_BM ?= 64
 STAGED_WIDE_BN ?= 64
 STAGED_WIDE_SUBS_M ?= 4
@@ -303,7 +308,7 @@ work/gemm_resident_n8.spv: src/gpu/gemm_resident.comp $(GEMM_GLSL) Makefile
 work/gemm_tiled_n8.spv: src/gpu/gemm_resident.comp $(GEMM_GLSL) Makefile
 	$(GLSL) -DXMX_TN=8 -DRM=2 -DRN=4 -o $@ $<
 work/gemm_staged_n8.spv: src/gpu/gemm_staged.comp $(GEMM_GLSL) Makefile
-	$(GLSL) -DXMX_TN=8 -DXMX_SG=$(STAGED_SG) -DSTAGED_BK=$(STAGED_BK) -o $@ $<
+	$(GLSL) -DXMX_TN=8 -DXMX_SG=$(STAGED_SG) -DSTAGED_BK=$(STAGED_BK) -DSTAGED_WARPS=$(STAGED_WARPS) $(STAGED_BT) -o $@ $<
 work/gemm_staged32_n8.spv: src/gpu/gemm_staged.comp $(GEMM_GLSL) Makefile
 	$(GLSL) -DXMX_TN=8 -DXMX_SG=$(STAGED_SG) -DSTAGED_BM=32 -o $@ $<
 work/gemm_staged32_deep_n8.spv: src/gpu/gemm_staged.comp $(GEMM_GLSL) Makefile

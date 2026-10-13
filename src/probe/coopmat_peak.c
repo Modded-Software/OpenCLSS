@@ -15,7 +15,7 @@
 	fprintf(stderr, "%s:%d: %s: VkResult %d\n", __FILE__, __LINE__, #call, r_); \
 	exit(1); } } while (0)
 
-enum { GROUPS = 8192, ITERS = 1024, CHAINS = 8 };
+enum { GROUPS = 8192, ITERS = 1024 };
 
 static double now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec * 1e-9; }
 
@@ -44,6 +44,8 @@ int main(int argc, char **argv)
 	uint32_t sg = (uint32_t)atoi(argv[2]);
 	double seconds = argc > 3 ? atof(argv[3]) : 2.0;
 	uint32_t tn = argc > 4 ? (uint32_t)atoi(argv[4]) : 8;
+	/* must match the shader's -DCHAINS: the FLOP count scales with it */
+	uint32_t CHAINS = argc > 5 ? (uint32_t)atoi(argv[5]) : 8;
 	FILE *f = fopen(argv[1], "rb");
 	if (!f) { perror(argv[1]); return 1; }
 	fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);

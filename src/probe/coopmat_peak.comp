@@ -11,7 +11,9 @@
 #ifndef XMX_TN
 #define XMX_TN 8
 #endif
+#ifndef CHAINS
 #define CHAINS 8
+#endif
 layout(local_size_x_id = 0) in;
 layout(constant_id = 1) const uint ITERS = 4096u;
 layout(binding = 0) buffer Out { float o[]; };

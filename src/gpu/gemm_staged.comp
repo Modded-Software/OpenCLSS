@@ -91,6 +91,21 @@ const uint RM = WM / TM, RN = WN / TN;
 
 /* A pad of eight halves keeps successive rows off the same shared-memory banks. */
 const uint SA = BK + 8, SB = BN + 8;
+/* STAGED_BT: B is staged N-major (each column's K run contiguous) and its fragments are
+ * read ColumnMajor. On Xe-HPG (Mesa 25.2) a RowMajor B fragment from shared memory is
+ * sixteen 16-bit loads and sixteen moves into DPAS's K-pair layout, per fragment, per
+ * subgroup - the K loop was bound on shared-memory messages, not the matrix units
+ * (INTEL_DEBUG=cs, notes/phase77). A column of a K-major fragment is exactly one lane's
+ * DPAS register run. The transpose moves to the store, once per element per step instead
+ * of once per subgroup that reads it. Same values, same K order: bit-identical. */
+#ifdef STAGED_BT
+const uint SBT = BK + 8;
+#define BI(k, n) ((n) * SBT + (k))
+const uint B_SIZE = BN * SBT;
+#else
+#define BI(k, n) ((k) * SB + (n))
+const uint B_SIZE = BK * SB;
+#endif
 
 layout(local_size_x = 32 * WARPS) in;
 
@@ -127,13 +142,13 @@ layout(push_constant, scalar) uniform Push {
  * of them. 90 -> 71 ms of a 720p frame, bit-identical. notes/improve-shared-memory.md. */
 layout(scalar) shared Operands {
     float16_t buf_a[BM * SA];
-    float16_t buf_b[BK * SB];
+    float16_t buf_b[B_SIZE];
 };
 /* The same operand bytes as above, eight halves per vector. SA and SB are multiples
  * of eight, so both arrays retain exactly the half view's size and byte offset. */
 layout(scalar) shared PackedOperands {
     uvec4 packed_a[BM * SA / 8u];
-    uvec4 packed_b[BK * SB / 8u];
+    uvec4 packed_b[B_SIZE / 8u];
 };
 layout(scalar) shared Staging {
     float stage[BM * BN];
@@ -227,7 +242,15 @@ void main() {
                 }
             for (uint p = 0u; p < B_PER; p++) {
                 uint item = lr + p * STEP, kk = item % BK, q = item / BK;
+#ifdef STAGED_BT
+                for (uint w = 0u; w < 4u; w++) {
+                    f16vec2 h = unpackFloat2x16(rb[p][w]);
+                    buf_b[BI(kk, q * 32u + lc + 2u * w)] = h.x;
+                    buf_b[BI(kk, q * 32u + lc + 2u * w + 1u)] = h.y;
+                }
+#else
                 packed_b[(kk * SB + q * 32u + lc) >> 3] = rb[p];
+#endif
             }
         } else if (!window_a && wide_a && wide_b && !transposed) {
             const uint STEP = (32u * WARPS) / 4u;
@@ -253,8 +276,8 @@ void main() {
                 }
             for (uint p = 0u; p < B_PER; p++) {
                 uint item = lr + p * STEP, kk = item % BK, c = (item / BK) * 32u + lc;
-                for (uint e = 0; e < 4u; e++) buf_b[kk * SB + c + e] = rb[2u * p][e];
-                for (uint e = 0; e < 4u; e++) buf_b[kk * SB + c + 4u + e] = rb[2u * p + 1u][e];
+                for (uint e = 0; e < 4u; e++) buf_b[BI(kk, c + e)] = rb[2u * p][e];
+                for (uint e = 0; e < 4u; e++) buf_b[BI(kk, c + 4u + e)] = rb[2u * p + 1u][e];
             }
         } else {
             for (uint q = 0u; q < KC; q++)
@@ -300,11 +323,11 @@ void main() {
                     uint at = bo + (col + nn) * ldb + k0 + lc;
                     if (wide_b) {
                         f16vec4 lo = b4.v4[at >> 2], hi = b4.v4[(at >> 2) + 1u];
-                        for (uint e = 0; e < 4u; e++) buf_b[(lc + e) * SB + nn] = lo[e];
-                        for (uint e = 0; e < 4u; e++) buf_b[(lc + 4u + e) * SB + nn] = hi[e];
+                        for (uint e = 0; e < 4u; e++) buf_b[BI(lc + e, nn)] = lo[e];
+                        for (uint e = 0; e < 4u; e++) buf_b[BI(lc + 4u + e, nn)] = hi[e];
                     } else {
                         for (uint e = 0; e < 8u; e++)
-                            buf_b[(lc + e) * SB + nn] = pc.b.v[at + e];
+                            buf_b[BI(lc + e, nn)] = pc.b.v[at + e];
                     }
                 }
             } else {
@@ -313,10 +336,10 @@ void main() {
                     uint at = bo + (k0 + kk) * ldb + col + c;
                     if (wide_b) {
                         f16vec4 lo = b4.v4[at >> 2], hi = b4.v4[(at >> 2) + 1u];
-                        for (uint e = 0; e < 4u; e++) buf_b[kk * SB + c + e] = lo[e];
-                        for (uint e = 0; e < 4u; e++) buf_b[kk * SB + c + 4u + e] = hi[e];
+                        for (uint e = 0; e < 4u; e++) buf_b[BI(kk, c + e)] = lo[e];
+                        for (uint e = 0; e < 4u; e++) buf_b[BI(kk, c + 4u + e)] = hi[e];
                     } else {
-                        for (uint e = 0; e < 8u; e++) buf_b[kk * SB + c + e] = pc.b.v[at + e];
+                        for (uint e = 0; e < 8u; e++) buf_b[BI(kk, c + e)] = pc.b.v[at + e];
                     }
                 }
             }
@@ -328,8 +351,13 @@ void main() {
                 coopMatLoad(fa[i], buf_a, (warp * WM + i * TM) * SA + kk, SA,
                             gl_CooperativeMatrixLayoutRowMajor);
             for (uint j = 0; j < RN; j++)
-                coopMatLoad(fb[j], buf_b, kk * SB + wcol + j * TN, SB,
+#ifdef STAGED_BT
+                coopMatLoad(fb[j], buf_b, BI(kk, wcol + j * TN), SBT,
+                            gl_CooperativeMatrixLayoutColumnMajor);
+#else
+                coopMatLoad(fb[j], buf_b, BI(kk, wcol + j * TN), SB,
                             gl_CooperativeMatrixLayoutRowMajor);
+#endif
             for (uint i = 0; i < RM; i++)
                 for (uint j = 0; j < RN; j++)
                     acc[i][j] = coopMatMulAdd(fa[i], fb[j], acc[i][j]);
