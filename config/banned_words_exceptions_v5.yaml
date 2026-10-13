@@ -870,12 +870,6 @@ exceptions:
     review_date: '2027-10-12'
     removal: Remove when the reference is rewritten to the hermetic uv run python form.
   - rule: protected-bare-system-interpreter
-    path: ^notes/HANDOFF\.md$
-    rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
-    owner: workspace-agent
-    review_date: '2027-10-12'
-    removal: Remove when the reference is rewritten to the hermetic uv run python form.
-  - rule: protected-bare-system-interpreter
     path: ^scripts/fetch_dxvk\.py$
     rationale: The token is a usage string or a build-time tool reference, not an unhermetic runtime call.
     owner: workspace-agent

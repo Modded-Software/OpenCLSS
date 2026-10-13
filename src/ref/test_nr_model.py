@@ -367,7 +367,7 @@ def main():
     test_accelerator()
     if not pathlib.Path(args.weights).exists():
         print(f"\nweights not found at {args.weights}; skipping the graph checks")
-        print("  see notes/HANDOFF.md section 0 for how to produce them")
+        print("  see README.md 'Extract the weights' for how to produce them")
     else:
         weights = test_weights(args.weights)
         if not args.skip_forward:
