@@ -23,6 +23,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include <time.h>
 
 /* ---- the OpenCL entry points this backend uses, declared by hand ------------------- */
 /* No CL/cl.h on this box; the runtime is libOpenCL.so.1 with no unversioned symlink, so
@@ -2064,6 +2065,13 @@ static int exec_traced(const struct cmd *c)
 	return 0;
 }
 
+static double now_ms(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (double)ts.tv_sec * 1e3 + (double)ts.tv_nsec / 1e6;
+}
+
 /* Bind the pull set: every buffer a command (or a composed op's parts) writes. */
 static void collect_pull(const struct cmd *c, unsigned char *pull)
 {
@@ -2089,6 +2097,7 @@ static void collect_pull(const struct cmd *c, unsigned char *pull)
 static int execute(const struct cmd *list, int n)
 {
 	trace_reset();
+	double t0 = now_ms();
 	/* Which buffers this submit writes, and what must be pushed up. A written buffer's
 	 * generation moves, so its VNNI-packed copy is remade before the GEMM that reads it
 	 * (packing is enqueued in queue order, after the write). Host-write buffers are the
@@ -2103,16 +2112,20 @@ static int execute(const struct cmd *list, int n)
 		if (b->used && b->kind == BUF_HOST_WRITE && b->host && b->bytes)
 			b->gen++;      /* the host's content is new this frame */
 	}
-	/* Host-writable buffers the model filled through the pointer this frame: up first. */
+	/* Host-writable buffers the model filled through the pointer this frame: up first.
+	 * Enqueued asynchronously: the queue is in-order, so these copies still run before any
+	 * kernel that reads them, but the host does not sit blocked on each one (was 4.4 ms of
+	 * the frame's serial prologue). The closing clFinish still waits for them. */
 	for (int i = 0; i < MAX_BUF; i++) {
 		struct buffer *b = &g.buf[i];
 		if (b->used && b->host && b->kind == BUF_HOST_WRITE && b->bytes
-		    && clEnqueueWriteBuffer(g.q, b->mem, CL_TRUE, 0, (size_t)b->bytes, b->host, 0, NULL, NULL)
+		    && clEnqueueWriteBuffer(g.q, b->mem, 0, 0, (size_t)b->bytes, b->host, 0, NULL, NULL)
 			       != CL_SUCCESS) {
 			free(pull);
 			return fail("push host-write buffer: %d", -1);
 		}
 	}
+	double t1 = now_ms();
 	/* XMX_FLUSH=N: submit to the device every N commands instead of only at the closing
 	 * clFinish, so the GPU starts running while the host is still recording/enqueuing the
 	 * rest of the frame. On an in-order flush-submitted queue the device otherwise sits idle
@@ -2132,7 +2145,9 @@ static int execute(const struct cmd *list, int n)
 		if (flush_every > 0 && ((i + 1) % flush_every) == 0)
 			clFlush(g.q);
 	}
+	double t2 = now_ms();
 	clFinish(g.q);
+	double t3 = now_ms();
 	trace_sum();
 	/* A host-write buffer a pass wrote is pushed up again at the next submit; pull it
 	 * first, or that push puts back what the host last wrote and undoes the pass - which
@@ -2147,6 +2162,7 @@ static int execute(const struct cmd *list, int n)
 			return fail("pull host-write buffer: %d", -1);
 		}
 	}
+	double t4 = now_ms();
 	free(pull);
 	/* Device-written buffers the host will read back through the pointer: down last. */
 	for (int i = 0; i < MAX_BUF; i++) {
@@ -2156,6 +2172,9 @@ static int execute(const struct cmd *list, int n)
 			       != CL_SUCCESS)
 			return fail("pull host-read buffer: %d", -1);
 	}
+	if (g.time)
+		fprintf(stderr, "[HOST] push %.2f enqueue %.2f wait-device %.2f pull %.2f read %.2f ms\n",
+			t1 - t0, t2 - t1, t3 - t2, t4 - t3, now_ms() - t4);
 	return n;
 }
 
