@@ -426,7 +426,7 @@ static const char *GEMM_BLK_SRC =
 "    return x < 0.0f ? -rounded : rounded;\n" \
 "}\n" \
 "inline float gate_activation(float x) {\n" \
-"    float wide = HROUND(x);\n" \
+"    float wide = HROUND_HW(x);\n" \
 "    float clamped = clamp(wide, -4.0f, 4.0f);\n" \
 "    float linear = fabs(clamped) * -0.055908203125f;\n" \
 "    linear += 0.447265625f;\n" \
