@@ -15,22 +15,20 @@ as the daemon does, and checks:
 
 Exits 77, skipped, off Windows.
 """
+
 import os
-import pathlib
 import sys
 import threading
 import time
-
-HERE = pathlib.Path(__file__).resolve().parent
-ROOT = HERE.parents[1]
-for sub in ("src/layer", "src/ref", "src/gpu"):
-    sys.path.insert(0, str(ROOT / sub))
 
 FAILURES = []
 
 
 def check(name, ok, detail=""):
-    print(f"  [{'ok  ' if ok else 'FAIL'}] {name}{'  ' + detail if detail else ''}", flush=True)
+    print(
+        f"  [{'ok  ' if ok else 'FAIL'}] {name}{'  ' + detail if detail else ''}",
+        flush=True,
+    )
     if not ok:
         FAILURES.append(name)
 
@@ -43,15 +41,23 @@ def main():
     if os.name != "nt":
         print("skipped: the named pipe is Windows'", flush=True)
         return 77
-    import numpy as np
     import nr_daemon
     import nr_pipe
+    import numpy as np
 
     path = rf"\\.\pipe\nr_test_pipe_{os.getpid()}"
     frame = 1280 * 720 * 4
-    rounds = [("bytearray", 1), ("bytes", 4096), ("bytearray", (1 << 20) + 3),
-              ("bytearray", frame), ("bytes", frame), ("bytearray", frame),
-              ("bytearray", 640 * 360 * 4), ("probe", 0), ("bytearray", frame)]
+    rounds = [
+        ("bytearray", 1),
+        ("bytes", 4096),
+        ("bytearray", (1 << 20) + 3),
+        ("bytearray", frame),
+        ("bytes", frame),
+        ("bytearray", frame),
+        ("bytearray", 640 * 360 * 4),
+        ("probe", 0),
+        ("bytearray", frame),
+    ]
     seen = []
     server = nr_pipe.NamedPipeServer(path)
 
@@ -61,17 +67,23 @@ def main():
             try:
                 before = nr_daemon._INBOX.get("frame")
                 # a status check is seen where the daemon sees it, on the 16-byte header
-                data = (nr_daemon.receive(connection, 16, probe_ok=True) if kind == "probe"
-                        else nr_daemon.receive(connection, size, keep="frame"))
+                data = (
+                    nr_daemon.receive(connection, 16, probe_ok=True)
+                    if kind == "probe"
+                    else nr_daemon.receive(connection, size, keep="frame")
+                )
                 if data is None:
                     seen.append((kind, None, None))
                     continue
                 seen.append((kind, data is before, len(data)))
                 # the answer goes into the request's own bytes, as the daemon writes it
-                np.bitwise_xor(np.frombuffer(data, np.uint8), np.uint8(0x5A),
-                               out=np.frombuffer(data, np.uint8))
+                np.bitwise_xor(
+                    np.frombuffer(data, np.uint8),
+                    np.uint8(0x5A),
+                    out=np.frombuffer(data, np.uint8),
+                )
                 connection.sendall(bytes(data) if kind == "bytes" else data)
-            except Exception as error:          # noqa: BLE001 - reported by the client side
+            except Exception as error:  # reported by the client side
                 seen.append((kind, repr(error), None))
             finally:
                 connection.close()
@@ -96,7 +108,7 @@ def main():
             payload = pattern(size, index)
             view = memoryview(payload)
             while view:
-                view = view[pipe.write(view):]
+                view = view[pipe.write(view) :]
             got = bytearray()
             while len(got) < size:
                 piece = pipe.read(size - len(got))
@@ -109,21 +121,30 @@ def main():
     server.close()
 
     sizes = [size for kind, size in rounds if kind != "probe"]
-    check(f"{len(sizes)} frames from 1 byte to {max(sizes)}, every byte back",
-          all(answer for answer in answers if answer is not None) and len(answers) == len(rounds),
-          f"answers {answers}")
+    check(
+        f"{len(sizes)} frames from 1 byte to {max(sizes)}, every byte back",
+        all(answer for answer in answers if answer is not None) and len(answers) == len(rounds),
+        f"answers {answers}",
+    )
     errors = [entry for entry in seen if isinstance(entry[1], str)]
     check("no error on the daemon's side", not errors, str(errors[:2]))
     reused = [entry[1] for entry in seen]
     # rounds 4-6 are three frames of one size in a row; round 7 changes the size; round 9
     # comes after it
-    check("a frame of the size before arrives in the same buffer",
-          reused[4] is True and reused[5] is True, f"{reused}")
+    check(
+        "a frame of the size before arrives in the same buffer",
+        reused[4] is True and reused[5] is True,
+        f"{reused}",
+    )
     check("and a new size gets a new one", reused[6] is False and reused[8] is False)
-    check("a connection closed before its first byte is a status check",
-          seen[7] == ("probe", None, None))
-    check("both sends, from a bytearray and from bytes",
-          {kind for kind, *_ in seen if kind != "probe"} == {"bytearray", "bytes"})
+    check(
+        "a connection closed before its first byte is a status check",
+        seen[7] == ("probe", None, None),
+    )
+    check(
+        "both sends, from a bytearray and from bytes",
+        {kind for kind, *_ in seen if kind != "probe"} == {"bytearray", "bytes"},
+    )
     if FAILURES:
         print(f"\n{len(FAILURES)} FAILED: " + ", ".join(FAILURES), flush=True)
         return 1

@@ -13,16 +13,14 @@ which is Phase 4's acceptance result. What it measures is whether the GPU path
 reproduces the CPU path *on the same weights*, so the decode being wrong does not
 invalidate it - it is a kernel test, not a weights test.
 """
-import sys
+
 from pathlib import Path
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src" / "ref"))
-sys.path.insert(0, str(ROOT / "src" / "gpu"))
 from hnet_model import Model
-from hnet_ops import softmax, l2_normalize, HEAD_DIM, TOKENS, GQA_RATIO
+from hnet_ops import GQA_RATIO, HEAD_DIM, TOKENS, l2_normalize, softmax
 from xmx import gemm
 
 
@@ -39,7 +37,7 @@ def attention(blk, tok, mm):
     k = np.repeat(k, GQA_RATIO, axis=0)
     v = np.repeat(v, GQA_RATIO, axis=0)
     logits = (q @ k.transpose(0, 2, 1)) * blk.t["attn_scale"].astype(np.float32).reshape(-1, 1, 1)
-    a = (softmax(logits + blk.t["attn_bias"].astype(np.float32)) @ v)
+    a = softmax(logits + blk.t["attn_bias"].astype(np.float32)) @ v
     a = a.transpose(1, 0, 2).reshape(TOKENS, C)
     return mm(a.astype(np.float16), blk.t["proj"])
 
@@ -96,17 +94,22 @@ def fused_attention(blk, tok, mm):
     k = np.repeat(k, rep, axis=0)
     v = np.repeat(v, rep, axis=0)
     logits = q @ k.transpose(0, 2, 1)
-    a = (softmax(logits + blk.t["attn_bias"].astype(np.float32)) @ v)
+    a = softmax(logits + blk.t["attn_bias"].astype(np.float32)) @ v
     return a.transpose(1, 0, 2).reshape(TOKENS, C)
 
 
 def main():
     m = Model(str(ROOT / "work" / "weights_ht.bin"))
     idx = {b.index: b for b in m.blocks}
-    cpu_mm = lambda A, B: A.astype(np.float32) @ B.astype(np.float32)
+
+    def cpu_mm(A, B):
+        return A.astype(np.float32) @ B.astype(np.float32)
+
     print("=== full attention layer: XMX vs CPU reference ===\n")
-    print("  %-10s %-8s %-13s %-13s %-11s %s"
-          % ("block", "C", "|gpu-cpu|max", "cpu output sd", "relative", "verdict"))
+    print(
+        "  %-10s %-8s %-13s %-13s %-11s %s"
+        % ("block", "C", "|gpu-cpu|max", "cpu output sd", "relative", "verdict")
+    )
     worst = 0.0
     rng = np.random.default_rng(11)
     for bi in (23, 26, 29, 40, 44, 47):
@@ -118,11 +121,15 @@ def main():
         dev = np.abs(got - ref).max()
         rel = dev / max(np.abs(ref).max(), 1e-30)
         worst = max(worst, rel)
-        print("  block%-5d %-8d %-13.4g %-13.4g %-11.4g %s"
-              % (bi, C, dev, ref.std(), rel, "OK" if rel < 1e-3 else "FAIL"))
+        print(
+            "  block%-5d %-8d %-13.4g %-13.4g %-11.4g %s"
+            % (bi, C, dev, ref.std(), rel, "OK" if rel < 1e-3 else "FAIL")
+        )
     print("\n=== ViT-1D bottleneck: attention and feed-forward on XMX ===\n")
-    print("  %-10s %-10s %-13s %-13s %-11s %s"
-          % ("block", "part", "|gpu-cpu|max", "cpu output sd", "relative", "verdict"))
+    print(
+        "  %-10s %-10s %-13s %-13s %-11s %s"
+        % ("block", "part", "|gpu-cpu|max", "cpu output sd", "relative", "verdict")
+    )
     for bi in (31, 34, 38):
         blk = idx[bi]
         C = blk.t["wq"].shape[0]
@@ -133,12 +140,16 @@ def main():
             dev = np.abs(got - ref).max()
             rel = dev / max(np.abs(ref).max(), 1e-30)
             worst = max(worst, rel)
-            print("  block%-5d %-10s %-13.4g %-13.4g %-11.4g %s"
-                  % (bi, label, dev, ref.std(), rel, "OK" if rel < 1e-3 else "FAIL"))
+            print(
+                "  block%-5d %-10s %-13.4g %-13.4g %-11.4g %s"
+                % (bi, label, dev, ref.std(), rel, "OK" if rel < 1e-3 else "FAIL")
+            )
 
     print("\n=== fused Swin blocks (45 of 71): attention path on XMX ===\n")
-    print("  %-10s %-8s %-13s %-13s %-11s %s"
-          % ("block", "C", "|gpu-cpu|max", "cpu output sd", "relative", "verdict"))
+    print(
+        "  %-10s %-8s %-13s %-13s %-11s %s"
+        % ("block", "C", "|gpu-cpu|max", "cpu output sd", "relative", "verdict")
+    )
     for bi in (9, 12, 15, 21, 49, 55, 57, 61):
         blk = idx[bi]
         if blk.kind != "fused_swin" or blk.C < 128:
@@ -150,12 +161,16 @@ def main():
         dev = np.abs(got - ref).max()
         rel = dev / max(np.abs(ref).max(), 1e-30)
         worst = max(worst, rel)
-        print("  block%-5d %-8d %-13.4g %-13.4g %-11.4g %s"
-              % (bi, C, dev, ref.std(), rel, "OK" if rel < 1e-3 else "FAIL"))
+        print(
+            "  block%-5d %-8d %-13.4g %-13.4g %-11.4g %s"
+            % (bi, C, dev, ref.std(), rel, "OK" if rel < 1e-3 else "FAIL")
+        )
 
-    print("\n  worst relative deviation across every layer tested: %.4g" % worst)
+    print(f"\n  worst relative deviation across every layer tested: {worst:.4g}")
     ok = worst < 1e-3
-    print("  %s" % ("PASS - all three block families reproduce on Intel hardware" if ok else "FAIL"))
+    print(
+        "  %s" % ("PASS - all three block families reproduce on Intel hardware" if ok else "FAIL")
+    )
     return 0 if ok else 1
 
 

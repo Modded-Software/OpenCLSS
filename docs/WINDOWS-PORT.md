@@ -64,7 +64,7 @@ auth handshake" belief cost a parallel implementation.
 | 2 | daemon dies on the 2nd connection | `nr_pipe.accept()` raises `ERROR_PIPE_BUSY` when the backlog is momentarily full | retry, carry empty handle |
 | 3 | tools never see a running daemon | `nr_paths.alive()` used `socket.AF_UNIX` | open-the-pipe probe |
 | 4 | `frame_profile.py` crashes on Windows | shaders read without encoding | `encoding="utf-8"` |
-| 5 | **whole picture NaN through the daemon** | **my own probe**: a second `xmxres.Runtime()` in the daemon's process reset libxmx.c's process-global Vulkan state | probe moved to a child process |
+| 5 | **whole picture NaN through the daemon** | **my own probe**: a second `xmxrt.recorder.Recorder()` in the daemon's process reset libxmx.c's process-global Vulkan state | probe moved to a child process |
 | 6 | batched GEMM path dead: `cannot open spv` | `build_win.bat` compiled "every .comp to a same-named .spv", missing the three aliases (gemm_batched ← gemm_coopmat_batched, gemm_f16acc ← gemm_coopmat_f16acc, gemm_tiled ← gemm_resident `-DRM=2 -DRN=2`) | the Makefile's alias table transplanted |
 | 7 | contract test `16x32x16 batch 3 B^T` FAIL | same root as 6 - the staged/batched routing was broken | same fix |
 | 8 | layer DLL loaded but produced no message | first build exported `nr_GetInstanceProcAddr`; the loader asks for **`vkGetInstanceProcAddr`** | `nr_layer.def` with the real names. *Corrected 2026-10-02:* the layer defines no function by those names, so with `vulkan-1.lib` linked they exported the loader's own; the loader had reached the layer through the negotiation all along. They are aliases of the layer's functions now, and the layer links no Vulkan library (`notes/HANDOFF.md`) |

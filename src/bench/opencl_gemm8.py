@@ -10,7 +10,14 @@ fits.  Intel's own tuning note names 32x64x16 as the optimum.
 Driven through ctypes (no CL headers on the box).  Every entry point declared: without
 argtypes ctypes truncates handles and the first call takes the process with it.
 """
-import argparse, ctypes, os, pathlib, sys, time
+
+import argparse
+import ctypes
+import os
+import pathlib
+import sys
+import time
+
 import numpy as np
 
 VECFLAG = "-DVEC" if os.environ.get("VEC") else ""
@@ -26,27 +33,52 @@ def pack_vnni(B):
     t = B.reshape(batch, K // 16, 8, 2, N // 8, 8).transpose(0, 1, 4, 2, 5, 3)
     return np.ascontiguousarray(t).view(np.uint32).reshape(batch, K * N // 2)
 
+
 # Debian ships only the soname (libOpenCL.so.1) unless the -dev package is installed.
 try:
     CL = ctypes.CDLL("libOpenCL.so")
 except OSError:
     CL = ctypes.CDLL("libOpenCL.so.1")
-V, U, I, S, L = ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_size_t, ctypes.c_ulonglong
+V, U, I, S, L = (
+    ctypes.c_void_p,
+    ctypes.c_uint,
+    ctypes.c_int,
+    ctypes.c_size_t,
+    ctypes.c_ulonglong,
+)
 PI, PU = ctypes.POINTER(I), ctypes.POINTER(U)
 CL.clGetPlatformIDs.argtypes, CL.clGetPlatformIDs.restype = [U, V, PU], I
 CL.clGetDeviceIDs.argtypes, CL.clGetDeviceIDs.restype = [V, L, U, V, PU], I
 CL.clCreateContext.argtypes, CL.clCreateContext.restype = [V, U, V, V, V, PI], V
 CL.clCreateCommandQueue.argtypes, CL.clCreateCommandQueue.restype = [V, V, L, PI], V
-CL.clCreateProgramWithSource.argtypes, CL.clCreateProgramWithSource.restype = [V, U, V, V, PI], V
-CL.clBuildProgram.argtypes, CL.clBuildProgram.restype = [V, U, V, ctypes.c_char_p, V, V], I
-CL.clGetProgramBuildInfo.argtypes, CL.clGetProgramBuildInfo.restype = [V, V, U, S, V, V], I
+CL.clCreateProgramWithSource.argtypes, CL.clCreateProgramWithSource.restype = (
+    [V, U, V, V, PI],
+    V,
+)
+CL.clBuildProgram.argtypes, CL.clBuildProgram.restype = (
+    [V, U, V, ctypes.c_char_p, V, V],
+    I,
+)
+CL.clGetProgramBuildInfo.argtypes, CL.clGetProgramBuildInfo.restype = (
+    [V, V, U, S, V, V],
+    I,
+)
 CL.clGetDeviceInfo.argtypes, CL.clGetDeviceInfo.restype = [V, U, S, V, V], I
 CL.clCreateKernel.argtypes, CL.clCreateKernel.restype = [V, ctypes.c_char_p, PI], V
-CL.clGetKernelWorkGroupInfo.argtypes, CL.clGetKernelWorkGroupInfo.restype = [V, V, U, S, V, V], I
+CL.clGetKernelWorkGroupInfo.argtypes, CL.clGetKernelWorkGroupInfo.restype = (
+    [V, V, U, S, V, V],
+    I,
+)
 CL.clCreateBuffer.argtypes, CL.clCreateBuffer.restype = [V, L, S, V, PI], V
 CL.clSetKernelArg.argtypes, CL.clSetKernelArg.restype = [V, U, S, V], I
-CL.clEnqueueNDRangeKernel.argtypes, CL.clEnqueueNDRangeKernel.restype = [V, V, U, V, V, V, U, V, V], I
-CL.clEnqueueReadBuffer.argtypes, CL.clEnqueueReadBuffer.restype = [V, V, U, S, S, V, U, V, V], I
+CL.clEnqueueNDRangeKernel.argtypes, CL.clEnqueueNDRangeKernel.restype = (
+    [V, V, U, V, V, V, U, V, V],
+    I,
+)
+CL.clEnqueueReadBuffer.argtypes, CL.clEnqueueReadBuffer.restype = (
+    [V, V, U, S, S, V, U, V, V],
+    I,
+)
 CL.clFinish.argtypes, CL.clFinish.restype = [V], I
 
 GPU, READ_ONLY, WRITE_ONLY, COPY_HOST = 1 << 2, 1 << 2, 1 << 1, 1 << 5
@@ -58,16 +90,18 @@ REGISTER_COUNT = 0x11B9  # CL_KERNEL_SPILL_MEM_SIZE (Intel), if the driver answe
 
 def kernel_private_bytes(device, kernel):
     value = L()
-    if CL.clGetKernelWorkGroupInfo(kernel, device, PRIVATE_MEM, ctypes.sizeof(value),
-                                   ctypes.byref(value), None):
+    if CL.clGetKernelWorkGroupInfo(
+        kernel, device, PRIVATE_MEM, ctypes.sizeof(value), ctypes.byref(value), None
+    ):
         return -1
     return value.value
 
 
 def kernel_spill_bytes(device, kernel):
     value = L()
-    if CL.clGetKernelWorkGroupInfo(kernel, device, REGISTER_COUNT, ctypes.sizeof(value),
-                                   ctypes.byref(value), None):
+    if CL.clGetKernelWorkGroupInfo(
+        kernel, device, REGISTER_COUNT, ctypes.sizeof(value), ctypes.byref(value), None
+    ):
         return -1
     return value.value
 
@@ -77,14 +111,19 @@ def device_and_context(index):
     CL.clGetPlatformIDs(4, platforms, ctypes.byref(count))
     for p in range(count.value):
         devices, found = (V * 4)(), U()
-        if not CL.clGetDeviceIDs(V(platforms[p]), GPU, 4, devices, ctypes.byref(found)) and found.value:
+        if (
+            not CL.clGetDeviceIDs(V(platforms[p]), GPU, 4, devices, ctypes.byref(found))
+            and found.value
+        ):
             if index >= found.value:
                 continue
             device, err = V(devices[index]), I()
             buf = ctypes.create_string_buffer(256)
             CL.clGetDeviceInfo(device, DEVICE_NAME, 256, buf, None)
-            print("device: %s" % buf.value.decode())
-            context = CL.clCreateContext(None, 1, ctypes.byref(device), None, None, ctypes.byref(err))
+            print(f"device: {buf.value.decode()}")
+            context = CL.clCreateContext(
+                None, 1, ctypes.byref(device), None, None, ctypes.byref(err)
+            )
             if err.value:
                 raise RuntimeError(f"clCreateContext: {err.value}")
             return device, context
@@ -95,8 +134,9 @@ def compile_kernel(context, device, source, options):
     err = I()
     text = source.encode()
     array, length = ctypes.c_char_p(text), S(len(text))
-    program = CL.clCreateProgramWithSource(context, 1, ctypes.byref(array),
-                                           ctypes.byref(length), ctypes.byref(err))
+    program = CL.clCreateProgramWithSource(
+        context, 1, ctypes.byref(array), ctypes.byref(length), ctypes.byref(err)
+    )
     if err.value:
         raise RuntimeError(f"clCreateProgramWithSource: {err.value}")
     if CL.clBuildProgram(program, 1, ctypes.byref(device), options.encode(), None, None):
@@ -115,7 +155,9 @@ def compile_kernel(context, device, source, options):
 
 
 def run(device, context, M, N, K, RM, RN, KU, source, repeats=5, calls=40, batch=1):
-    kernel = compile_kernel(context, device, source, f"-DRM={RM} -DRN={RN} -DKUNROLL={KU} {VECFLAG}")
+    kernel = compile_kernel(
+        context, device, source, f"-DRM={RM} -DRN={RN} -DKUNROLL={KU} {VECFLAG}"
+    )
     err = I()
     queue = CL.clCreateCommandQueue(context, device, 0, ctypes.byref(err))
     rng = np.random.default_rng(0)
@@ -124,8 +166,13 @@ def run(device, context, M, N, K, RM, RN, KU, source, repeats=5, calls=40, batch
     C = np.zeros((batch, M, N), np.float32)
 
     def buffer(array, flags):
-        handle = CL.clCreateBuffer(context, flags | COPY_HOST, array.nbytes,
-                                   array.ctypes.data, ctypes.byref(err))
+        handle = CL.clCreateBuffer(
+            context,
+            flags | COPY_HOST,
+            array.nbytes,
+            array.ctypes.data,
+            ctypes.byref(err),
+        )
         if err.value:
             raise RuntimeError(f"clCreateBuffer: {err.value}")
         return V(handle)
@@ -148,15 +195,23 @@ def run(device, context, M, N, K, RM, RN, KU, source, repeats=5, calls=40, batch
         CL.clFinish(queue)
 
     once()
-    best = min((lambda t=time.perf_counter(): (once(), time.perf_counter() - t)[1])()
-               for _ in range(repeats))
-    return (2.0 * M * N * K * calls / best / 1e9, best,
-            kernel_private_bytes(device, kernel), kernel_spill_bytes(device, kernel))
+    best = min(
+        (lambda t=time.perf_counter(): (once(), time.perf_counter() - t)[1])()
+        for _ in range(repeats)
+    )
+    return (
+        2.0 * M * N * K * calls / best / 1e9,
+        best,
+        kernel_private_bytes(device, kernel),
+        kernel_spill_bytes(device, kernel),
+    )
 
 
 def readback(device, context, M, N, K, RM, RN, KU, source, batch=1):
     # Re-run one plain call and copy C back to judge correctness against numpy.
-    kernel = compile_kernel(context, device, source, f"-DRM={RM} -DRN={RN} -DKUNROLL={KU} {VECFLAG}")
+    kernel = compile_kernel(
+        context, device, source, f"-DRM={RM} -DRN={RN} -DKUNROLL={KU} {VECFLAG}"
+    )
     err = I()
     queue = CL.clCreateCommandQueue(context, device, 0, ctypes.byref(err))
     rng = np.random.default_rng(3)
@@ -165,7 +220,13 @@ def readback(device, context, M, N, K, RM, RN, KU, source, batch=1):
     out = np.zeros((batch, M, N), np.float32)
 
     def buffer(array, flags):
-        h = CL.clCreateBuffer(context, flags | COPY_HOST, array.nbytes, array.ctypes.data, ctypes.byref(err))
+        h = CL.clCreateBuffer(
+            context,
+            flags | COPY_HOST,
+            array.nbytes,
+            array.ctypes.data,
+            ctypes.byref(err),
+        )
         return V(h)
 
     Bdev = pack_vnni(B) if PACKED else B
@@ -199,9 +260,13 @@ def main():
     source = pathlib.Path(__file__).with_name(CL_SRC).read_text()
     device, context = device_and_context(args.device)
     print(f"  {M}x{N}x{K}, subgroup 8, DG2 8x8x16 DPAS, register-blocked (RM x RN atoms)")
-    print(f"  Vulkan cooperative matrix on this card peaks at ~10800 GFLOP/s; XMX FP16 peak ~137000\n")
-    print("  %-10s %8s %12s %12s %10s %10s %10s"
-          % ("block", "atoms", "GFLOP/s", "ms", "rel err", "priv", "spill"))
+    print(
+        "  Vulkan cooperative matrix on this card peaks at ~10800 GFLOP/s; XMX FP16 peak ~137000\n"
+    )
+    print(
+        "  %-10s %8s %12s %12s %10s %10s %10s"
+        % ("block", "atoms", "GFLOP/s", "ms", "rel err", "priv", "spill")
+    )
     failures = []
     for block in args.blocks.split(","):
         rm, rn = (int(v) for v in block.split("x"))
@@ -209,9 +274,23 @@ def main():
             continue
         try:
             rate, best, priv, spill = run(device, context, M, N, K, rm, rn, args.kunroll, source)
-            err = readback(device, context, M, N, K, rm, rn, args.kunroll, source)[0] if args.check else float("nan")
-            print("  %-10s %7d %12.1f %12.4f %10.2e %10d %10d"
-                  % (f"{8*rm}x{8*rn}", rm * rn, rate, 1000 * best / 40, err, priv, spill))
+            err = (
+                readback(device, context, M, N, K, rm, rn, args.kunroll, source)[0]
+                if args.check
+                else float("nan")
+            )
+            print(
+                "  %-10s %7d %12.1f %12.4f %10.2e %10d %10d"
+                % (
+                    f"{8 * rm}x{8 * rn}",
+                    rm * rn,
+                    rate,
+                    1000 * best / 40,
+                    err,
+                    priv,
+                    spill,
+                )
+            )
         except RuntimeError as failure:
             failures.append((block, str(failure).splitlines()[0][:100]))
     if failures:

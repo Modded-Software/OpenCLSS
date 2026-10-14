@@ -17,6 +17,7 @@ and the temporal path has no history yet.
 Prints the table and the literal for `nr_knobs.RATES`, so the number in the README has a
 program behind it rather than a memory of one.
 """
+
 import argparse
 import json
 import pathlib
@@ -32,8 +33,15 @@ import numpy as np
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 MAGIC = 0x304E524E
 FORMAT_B8G8R8A8 = 44
-PLAN = ((512, 288, 0.35), (512, 288, 0.50), (640, 360, 0.35), (640, 360, 0.50),
-        (854, 480, 0.50), (1024, 768, 0.55), (1920, 1080, 0.55))
+PLAN = (
+    (512, 288, 0.35),
+    (512, 288, 0.50),
+    (640, 360, 0.35),
+    (640, 360, 0.50),
+    (854, 480, 0.50),
+    (1024, 768, 0.55),
+    (1920, 1080, 0.55),
+)
 
 
 def frame(width, height, seed):
@@ -59,8 +67,10 @@ def round_trip(path, payload, header, want):
         while got < want:
             piece = client.recv(want - got)
             if not piece:
-                raise RuntimeError("the daemon answered %d of %d bytes: it rejected the "
-                                   "frame, and its log says why" % (got, want))
+                raise RuntimeError(
+                    "the daemon answered %d of %d bytes: it rejected the "
+                    "frame, and its log says why" % (got, want)
+                )
             got += len(piece)
     return time.perf_counter() - started
 
@@ -78,16 +88,26 @@ def measure(daemon_socket, settings, width, height, scale, frames, warmup, extra
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("cases", nargs="*", help="WxH@scale; the published table if none")
     # Nine and three, not five and two: on 2026-09-23 five frames after two put the 1080p
     # case at 467 ms (451-518) and nine after three at 354 (327-358), run to run.
     parser.add_argument("--frames", type=int, default=9, help="timed frames per case")
-    parser.add_argument("--warmup", type=int, default=3,
-                        help="frames to discard while the extent's buffers are built")
-    parser.add_argument("--set", action="append", default=[], metavar="KNOB=VALUE",
-                        help="any other setting for the daemon, e.g. min_extent=128")
+    parser.add_argument(
+        "--warmup",
+        type=int,
+        default=3,
+        help="frames to discard while the extent's buffers are built",
+    )
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="KNOB=VALUE",
+        help="any other setting for the daemon, e.g. min_extent=128",
+    )
     args = parser.parse_args()
     extra = {}
     for item in args.set:
@@ -107,10 +127,20 @@ def main():
         settings.write_text(json.dumps({"render_scale": plan[0][2]}))
         sys.stderr.write(f"[live_rates] starting the daemon at {daemon_socket}\n")
         daemon = subprocess.Popen(
-            [sys.executable, str(ROOT / "src" / "layer" / "nr_daemon.py"),
-             "--socket", str(daemon_socket), "--settings", str(settings),
-             "--max-pixels", str(1920 * 1200)],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            [
+                sys.executable,
+                str(ROOT / "src" / "layer" / "nr_daemon.py"),
+                "--socket",
+                str(daemon_socket),
+                "--settings",
+                str(settings),
+                "--max-pixels",
+                str(1920 * 1200),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
         try:
             for _ in range(600):
                 if daemon_socket.exists():
@@ -121,12 +151,27 @@ def main():
             print("  %-14s %6s %8s %8s %18s" % ("swapchain", "scale", "ms", "fps", "min-max ms"))
             measured = []
             for width, height, scale in plan:
-                middle, low, high = measure(daemon_socket, settings, width, height, scale,
-                                            args.frames, args.warmup, extra)
+                middle, low, high = measure(
+                    daemon_socket,
+                    settings,
+                    width,
+                    height,
+                    scale,
+                    args.frames,
+                    args.warmup,
+                    extra,
+                )
                 measured.append((width, height, scale, 1000 * middle))
-                print("  %-14s %6.2f %8.0f %8.1f %18s"
-                      % ("%dx%d" % (width, height), scale, 1000 * middle, 1 / middle,
-                         "%.0f-%.0f" % (1000 * low, 1000 * high)))
+                print(
+                    "  %-14s %6.2f %8.0f %8.1f %18s"
+                    % (
+                        "%dx%d" % (width, height),
+                        scale,
+                        1000 * middle,
+                        1 / middle,
+                        f"{1000 * low:.0f}-{1000 * high:.0f}",
+                    )
+                )
             print("\n  nr_knobs.RATES = (")
             for width, height, scale, ms in measured:
                 print("      (%d, %d, %.2f, %.1f)," % (width, height, scale, ms))

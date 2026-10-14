@@ -9,12 +9,12 @@ to what" is a number rather than an adjective.
 Every value in a sweep costs a forward pass, because the conditioning scalars land in
 feature channels 10-14 - except `intensity`, which is a composition blend and is free.
 """
-import argparse, pathlib, sys
-import numpy as np
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src" / "ref"))
-import image_io, nr_frame  # noqa: E402
+import argparse
+
+import image_io
+import nr_frame
+import numpy as np
 
 
 def bands(image, sigma=2.0):
@@ -27,7 +27,9 @@ def bands(image, sigma=2.0):
     for axis in (0, 1):
         padded = np.apply_along_axis(
             lambda row: np.convolve(np.pad(row, radius, mode="edge"), kernel, "valid"),
-            axis, low)
+            axis,
+            low,
+        )
         low = padded
     return low, image - low
 
@@ -68,9 +70,16 @@ def main():
         delta = np.abs(image - base)
         dl, dh = np.abs(low - base_low), np.abs(high - base_high)
         total = dl.mean() + dh.mean() + 1e-12
-        print("  %-26s change %.5f   low %4.0f%% / high %4.0f%%   concentration %5.1fx"
-              % (label, delta.mean(), 100 * dl.mean() / total, 100 * dh.mean() / total,
-                 concentration(delta.mean(axis=2))))
+        print(
+            "  %-26s change %.5f   low %4.0f%% / high %4.0f%%   concentration %5.1fx"
+            % (
+                label,
+                delta.mean(),
+                100 * dl.mean() / total,
+                100 * dh.mean() / total,
+                concentration(delta.mean(axis=2)),
+            )
+        )
 
     print("  reference: profile=standard, everything at its default\n")
     print("  -- local tone strength (vendor range 0..2, default 1.0) --")
@@ -81,8 +90,9 @@ def main():
         report(f"local_structure={value}", render(local_structure=value))
     print("\n  -- skin structure, with the automatic mask on (vendor default 2.0) --")
     for value in (-1.0, 0.0, 1.0, 2.0):
-        mask = nr_frame.AutomaticMask(skin_structure_strength=value,
-                                      automatic_mask_structure_strength=-1.0)
+        mask = nr_frame.AutomaticMask(
+            skin_structure_strength=value, automatic_mask_structure_strength=-1.0
+        )
         report(f"skin_structure={value}", render(automatic_mask=mask))
     print("\n  -- style index (0, 1, 2 are the presets; normalised by 1/128) --")
     for value in (1, 2, 4, 8):
@@ -99,11 +109,17 @@ def main():
             [colour, base] + [render(style_index=v) for v in (1, 2)],
             [colour, base] + [nr_frame.compose(head, colour, intensity=v) for v in (0.5, 2.0)],
         ]
-        sheet(args.sheet, rows,
-              ["source | default | local_tone 0 | local_tone 2",
-               "source | default | local_structure 0 | local_structure 2",
-               "source | default | style 1 | style 2",
-               "source | default | intensity 0.5 | intensity 2"], args.size)
+        sheet(
+            args.sheet,
+            rows,
+            [
+                "source | default | local_tone 0 | local_tone 2",
+                "source | default | local_structure 0 | local_structure 2",
+                "source | default | style 1 | style 2",
+                "source | default | intensity 0.5 | intensity 2",
+            ],
+            args.size,
+        )
 
 
 def sheet(path, rows, labels, size):
@@ -111,14 +127,17 @@ def sheet(path, rows, labels, size):
     gap, pad = 4, 1.0
     height = width = size
     columns = max(len(row) for row in rows)
-    canvas = np.full(((height + gap) * len(rows) - gap,
-                      (width + gap) * columns - gap, 3), pad, np.float32)
+    canvas = np.full(
+        ((height + gap) * len(rows) - gap, (width + gap) * columns - gap, 3),
+        pad,
+        np.float32,
+    )
     for r, row in enumerate(rows):
         for c, image in enumerate(row):
             y, x = r * (height + gap), c * (width + gap)
-            canvas[y:y + height, x:x + width] = image
+            canvas[y : y + height, x : x + width] = image
     image_io.save(canvas, path)
-    print("\n  wrote %s" % path)
+    print(f"\n  wrote {path}")
     for r, label in enumerate(labels):
         print("    row %d: %s" % (r + 1, label))
 

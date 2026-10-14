@@ -13,12 +13,13 @@ failing test rather than a surprise for whoever reads the README next. The rates
 here for a worse reason: the hand-written one survived the host passes moving to C and was
 understating this machine by a third, and at 1080p by half, for a week.
 """
+
 import pathlib
 import sys
 
+import nr_knobs
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src" / "layer"))
-import nr_knobs  # noqa: E402
 
 README = ROOT / "docs" / "SETTINGS.md"
 
@@ -29,27 +30,42 @@ def knobs():
         if knob.kind == "choice":
             span = " / ".join(f"`{name}`" for name in nr_knobs.PROFILES)
         else:
-            span = (f"`{knob.low:g}` to `{knob.high:g}`, step `{knob.step:g}`, "
-                    f"default `{knob.default:g}`")
-        lines += [f"### `{knob.name}` - {knob.summary}", "", span, "",
-                  knob.detail.replace(" -> ", " → "), ""]
+            span = (
+                f"`{knob.low:g}` to `{knob.high:g}`, step `{knob.step:g}`, "
+                f"default `{knob.default:g}`"
+            )
+        lines += [
+            f"### `{knob.name}` - {knob.summary}",
+            "",
+            span,
+            "",
+            knob.detail.replace(" -> ", " → "),
+            "",
+        ]
     return lines
 
 
 def rates():
-    lines = [f"Measured through the socket on {nr_knobs.RATES_MEASURED} by "
-             "`uv run python src/bench/live_rates.py` - the whole round trip a game waits for, "
-             "median of nine frames, not graph time alone:", "",
-             "| swapchain | render scale | ms | fps |", "| --- | ---: | ---: | ---: |"]
+    lines = [
+        f"Measured through the socket on {nr_knobs.RATES_MEASURED} by "
+        "`uv run python src/bench/live_rates.py` - the whole round trip a game waits for, "
+        "median of nine frames, not graph time alone:",
+        "",
+        "| swapchain | render scale | ms | fps |",
+        "| --- | ---: | ---: | ---: |",
+    ]
     for width, height, scale, ms in nr_knobs.RATES:
         lines.append(f"| {width}x{height} | {scale:.2f} | {ms:.0f} | {1000 / ms:.1f} |")
     if nr_knobs.RATES_NOTE:
         lines += ["", nr_knobs.RATES_NOTE]
-    lines += ["",
-              "That is the daemon's own cost with nothing else on the GPU. A game adds its "
-              "own frame to it: **Tekken 7** ran at **30 fps at 800x450** with the render "
-              "scale at 0.35, and 27 at 0.6, in a live session on 2026-09-27 - against 10.5 fps "
-              "at 640x360 on 2026-09-16 (`notes/phase59`).", ""]
+    lines += [
+        "",
+        "That is the daemon's own cost with nothing else on the GPU. A game adds its "
+        "own frame to it: **Tekken 7** ran at **30 fps at 800x450** with the render "
+        "scale at 0.35, and 27 at 0.6, in a live session on 2026-09-27 - against 10.5 fps "
+        "at 640x360 on 2026-09-16 (`notes/phase59`).",
+        "",
+    ]
     return lines
 
 
@@ -57,7 +73,7 @@ BLOCKS = {"knobs": knobs, "rates": rates}
 
 
 def markdown(name):
-    return "\n".join([f"<!-- {name}:begin -->", ""] + BLOCKS[name]() + [f"<!-- {name}:end -->"])
+    return "\n".join([f"<!-- {name}:begin -->", "", *BLOCKS[name](), f"<!-- {name}:end -->"])
 
 
 def rendered(text):

@@ -14,6 +14,7 @@ same line or the two around it, so that a reader meeting it also meets the retra
 
     python3 src/tools/claims_check.py          # exit 1 and name every survivor
 """
+
 import pathlib
 import re
 import subprocess
@@ -22,45 +23,70 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SELF = "src/tools/claims_check.py"
 EXEMPT = ("notes/",)
-NEAR = 2                                  # lines either side that count as "beside"
+NEAR = 2  # lines either side that count as "beside"
 
 # Anything that retracts rather than repeats: cite the note, or say the true thing.
-MARKERS = re.compile(r"withdrawn|superseded|was wrong|no longer|not parameters|"
-                     r"an earlier|earlier figure|there is no|storage, not|phase61|"
-                     r"full MHA|full multi-head|no GQA|\(C, 3C\)", re.I)
+MARKERS = re.compile(
+    r"withdrawn|superseded|was wrong|no longer|not parameters|"
+    r"an earlier|earlier figure|there is no|storage, not|phase61|"
+    r"full MHA|full multi-head|no GQA|\(C, 3C\)",
+    re.IGNORECASE,
+)
 # A file that says at the top that it is superseded is a record of how it was thought, kept
 # deliberately (`notes/HANDOFF.md` section 3). It may hold the old claim; it may not be
 # built on. The marker has to be in the header, not anywhere in the file.
-SUPERSEDED = re.compile(r"superseded", re.I)
+SUPERSEDED = re.compile(r"superseded", re.IGNORECASE)
 HEADER = 40
 
 
 class Claim:
     def __init__(self, name, pattern, truth, note):
-        self.name, self.pattern, self.truth, self.note = name, re.compile(pattern), truth, note
+        self.name, self.pattern, self.truth, self.note = (
+            name,
+            re.compile(pattern),
+            truth,
+            note,
+        )
 
 
 WITHDRAWN = (
-    Claim("73 841 889 parameters", r"73[\s,]?841[\s,]?889",
-          "145 755 123 parameters; 73 841 889 is the weight section's bytes halved",
-          "notes/phase61"),
-    Claim("grouped-query attention", r"\bGQA\b|grouped-query",
-          "qkv_weight is (C, 3C): full multi-head attention", "notes/phase61"),
-    Claim("27 % FP16 subnormals", r"27(\.22)?\s*%[^.\n]{0,40}subnormal|subnormal[^.\n]{0,40}27",
-          "the real weights hold 7 subnormals; 27 % was measured on the misread decode",
-          "notes/phase61"),
-    Claim("a weaker pass at render scale 1.0", r"effect comes out weaker|"
-          r"(change|effect)[^.\n]{0,40}1\.5(-1\.7)?x\s+smaller",
-          "1280x720 at 1.0 ran on a 1280x768 field, which has no padding token in its bottleneck; "
-          "on the vendor's 1344x768 the pass is as strong as at 0.9",
-          "notes/opendlss-reference.md"),
+    Claim(
+        "73 841 889 parameters",
+        r"73[\s,]?841[\s,]?889",
+        "145 755 123 parameters; 73 841 889 is the weight section's bytes halved",
+        "notes/phase61",
+    ),
+    Claim(
+        "grouped-query attention",
+        r"\bGQA\b|grouped-query",
+        "qkv_weight is (C, 3C): full multi-head attention",
+        "notes/phase61",
+    ),
+    Claim(
+        "27 % FP16 subnormals",
+        r"27(\.22)?\s*%[^.\n]{0,40}subnormal|subnormal[^.\n]{0,40}27",
+        "the real weights hold 7 subnormals; 27 % was measured on the misread decode",
+        "notes/phase61",
+    ),
+    Claim(
+        "a weaker pass at render scale 1.0",
+        r"effect comes out weaker|"
+        r"(change|effect)[^.\n]{0,40}1\.5(-1\.7)?x\s+smaller",
+        "1280x720 at 1.0 ran on a 1280x768 field, which has no padding token in its bottleneck; "
+        "on the vendor's 1344x768 the pass is as strong as at 0.9",
+        "notes/opendlss-reference.md",
+    ),
 )
 
 
 def tracked():
     try:
-        listing = subprocess.run(["git", "-C", str(ROOT), "ls-files"],
-                                 capture_output=True, text=True, check=True)
+        listing = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
     except subprocess.CalledProcessError as error:
         raise RuntimeError(f"git ls-files failed: {error.stderr}") from error
     for name in listing.stdout.split("\n"):
@@ -83,7 +109,7 @@ def survivors():
             for number, line in enumerate(lines):
                 if not claim.pattern.search(line):
                     continue
-                window = "\n".join(lines[max(0, number - NEAR):number + NEAR + 1])
+                window = "\n".join(lines[max(0, number - NEAR) : number + NEAR + 1])
                 if MARKERS.search(window):
                     continue
                 found.append((name, number + 1, claim, line.strip()))
@@ -97,8 +123,10 @@ def main():
         print(f"    says: {line[:96]}")
         print(f"    true: {claim.truth}")
     if found:
-        print(f"\n{len(found)} withdrawn claim(s) still published. Correct them, or say "
-              f"beside them that they are withdrawn.")
+        print(
+            f"\n{len(found)} withdrawn claim(s) still published. Correct them, or say "
+            f"beside them that they are withdrawn."
+        )
         return 1
     print("no withdrawn claim outside the notes that withdrew it")
     return 0

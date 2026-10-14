@@ -2,7 +2,7 @@
  * libmetalmx - libxmx on Metal: the same entry points, the same contract, driving Apple
  * silicon's own API instead of Vulkan through MoltenVK.
  *
- * Every `xmx_*` symbol in `xmx.h` is here, so `nr_frame.c`, `xmx.py` and `xmxres.py` bind
+ * Every `xmx_*` symbol in `xmx.h` is here, so `nr_frame.c`, `xmx.py` and `xmxrt` bind
  * this library exactly as they bind libxmx (`NR_GPU_BACKEND=metal` makes them). Shader
  * names stay the SPIR-V names: `xmx_init("gemm_coopmat.spv")` runs the Metal kernel
  * `gemm_coopmat` from the metallib compiled into this binary (`nr_metallib.h`, bin2c over

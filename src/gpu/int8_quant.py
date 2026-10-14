@@ -27,10 +27,11 @@ Padding is here too, because the kernel has no choice about it:
 `cooperativeMatrixRobustBufferAccess` is false on this hardware, so an edge tile reads
 whatever follows the buffer. Zeros pad exactly in int8 and contribute nothing to the sum.
 """
+
 import numpy as np
 
-TM, TN, TK = 8, 16, 32          # the only integer cooperative-matrix shape on Xe2
-LIMIT = 127                     # symmetric: -128 is representable but never produced
+TM, TN, TK = 8, 16, 32  # the only integer cooperative-matrix shape on Xe2
+LIMIT = 127  # symmetric: -128 is representable but never produced
 
 
 def quantise(values, axis):
@@ -80,8 +81,11 @@ def pad_for_tiles(a, b):
 def rescale(accumulator, a_scale, b_scale, rows, columns):
     """int32 accumulator back to float, and the padding cropped off."""
     out = accumulator[:rows, :columns].astype(np.float32)
-    return out * np.asarray(a_scale, np.float32)[:rows, None] \
-               * np.asarray(b_scale, np.float32)[None, :columns]
+    return (
+        out
+        * np.asarray(a_scale, np.float32)[:rows, None]
+        * np.asarray(b_scale, np.float32)[None, :columns]
+    )
 
 
 def prepare(a, b):
@@ -103,5 +107,5 @@ def storage_bytes(weights_by_name):
         if value.ndim != 2:
             continue
         wide += value.size * 4
-        packed += value.size + value.shape[1] * 4           # one float scale per column
+        packed += value.size + value.shape[1] * 4  # one float scale per column
     return wide, packed

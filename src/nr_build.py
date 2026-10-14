@@ -19,6 +19,7 @@ build given that file compiles it into libnr_frame (bin2c, `NR_WEIGHTS_FILE`), a
 side needs no file at all; the Python graph still reads the safetensors itself.
 Nothing but the standard library is imported, so a single-file tool can share this.
 """
+
 import os
 import pathlib
 import sys
@@ -41,7 +42,10 @@ def weights_file(root=ROOT):
     if named:
         return pathlib.Path(named)
     mlxw = pathlib.Path(root) / "work" / "mlxw"
-    prepared, logical = mlxw / "dlssnr-prepared.safetensors", mlxw / "dlssnr-logical.safetensors"
+    prepared, logical = (
+        mlxw / "dlssnr-prepared.safetensors",
+        mlxw / "dlssnr-logical.safetensors",
+    )
     return prepared if prepared.exists() else logical
 
 
@@ -84,8 +88,9 @@ def backend():
     `docs/opencl-port.md`). Anything else is refused rather than guessed."""
     chosen = os.environ.get("NR_GPU_BACKEND", "vulkan").strip().lower() or "vulkan"
     if chosen not in RUNTIMES:
-        raise ValueError("NR_GPU_BACKEND must be 'vulkan', 'metal', 'd3d12' or 'opencl', not %r"
-                         % chosen)
+        raise ValueError(
+            f"NR_GPU_BACKEND must be 'vulkan', 'metal', 'd3d12' or 'opencl', not {chosen!r}"
+        )
     if chosen == "metal" and sys.platform != "darwin":
         raise ValueError("NR_GPU_BACKEND=metal is macOS only; libmetalmx is built on Apple alone")
     if chosen == "d3d12" and sys.platform != "win32":
@@ -93,7 +98,7 @@ def backend():
     return chosen
 
 
-_dll_directories = []          # the handles keep the directories on Windows' search path
+_dll_directories = []  # the handles keep the directories on Windows' search path
 
 
 def dll_directories():
@@ -134,6 +139,7 @@ def shader_arg(lib, name):
     compiled in (the CMake build, bin2c), so it loads the embedded bytes; else the file this
     build wrote. `lib` is the ctypes handle of libxmx."""
     import ctypes
+
     name = name if name.endswith(".spv") else name + ".spv"
     probe = getattr(lib, "xmx_embedded_shader", None)
     if probe is not None:

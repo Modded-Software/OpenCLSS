@@ -7,10 +7,8 @@ the hyphenated command name the desktop shortcut and the manual use.
     src/layer/nr-toggle                 flip the effect
     src/layer/nr-toggle on | off | temporal | status | install
 """
-import pathlib
 import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from nr_toggle import main
 
 if __name__ == "__main__":

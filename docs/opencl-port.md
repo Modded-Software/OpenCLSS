@@ -38,7 +38,7 @@ is all ANV offers) - but those are not the GEMM lever. The port is accepted on f
 ## 2. What exists
 
 - `src/gpu/libopenclmx.c` (~2900 lines): the same `xmx_*` C ABI as `libxmx.c`, so
-  `xmxres.py`, `nr_frame_resident.py` and `src/ref/nr_frame.c` need no new calls. The whole
+  `xmxrt`, `nr_frame_resident.py` and `src/ref/nr_frame.c` need no new calls. The whole
   fused frame runs on it: general strided/batched/transposed GEMM, the fused QKV-epilogue
   projection (Run 43), the fused on-chip window attention (Run 42), the fused FFN, unary,
   row, copy, `XMX_TIME` events, `xmx_graph_capture/run`, and `xmx_profile_*` with the same

@@ -12,6 +12,7 @@ yet role-assigned, so RGB is tiled up to the stage width on the way in and the f
 three channels are taken on the way out. Those two will be replaced as their layouts
 are recovered; everything between them is the recovered network.
 """
+
 import sys
 import time
 from pathlib import Path
@@ -19,14 +20,34 @@ from pathlib import Path
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
-sys.path.insert(0, str(HERE.parent / "gpu"))
 from hnet_model import Model
-from hnet_ops import (softmax, ptx_softmax, l2_normalize, cos_skip, HEAD_DIM, TOKENS,
-                      GQA_RATIO, window_partition, window_reverse)
-from image_io import load, save, test_pattern, smooth_pattern, clean_and_noisy, denoise_score
+from hnet_ops import (
+    GQA_RATIO,
+    HEAD_DIM,
+    TOKENS,
+    cos_skip,
+    l2_normalize,
+    ptx_softmax,
+    softmax,
+    window_partition,
+    window_reverse,
+)
+from image_io import (
+    clean_and_noisy,
+    denoise_score,
+    load,
+    save,
+    smooth_pattern,
+)
 
-GEOMETRY = {32: (512, 256), 64: (256, 128), 128: (128, 64), 256: (64, 32), 512: (32, 16), 1024: (16, 8)}
+GEOMETRY = {
+    32: (512, 256),
+    64: (256, 128),
+    128: (128, 64),
+    256: (64, 32),
+    512: (32, 16),
+    1024: (16, 8),
+}
 
 # Encoder stage -> the last block of that stage, and the decoder block where its
 # output rejoins. A U-Net carries detail across these; without them the four
@@ -34,7 +55,6 @@ GEOMETRY = {32: (512, 256), 64: (256, 128), 128: (128, 64), 256: (64, 32), 512: 
 # BSUpsampleSkip / SubtiledSkipBlend / cc_tinlayout_upsample_skip_block confirm the
 # connections exist; the exact blend is unknown, so a plain add is used.
 SKIP = {4: 66, 8: 62, 14: 56, 22: 48, 30: 40}
-
 
 use_pre_proj = True
 use_attn_bias = True
@@ -65,8 +85,10 @@ def attend(blk, x, mm, shift=0):
     q = mm(flat, blk.t["wq"]).reshape(n, TOKENS, h, HEAD_DIM).transpose(0, 2, 1, 3)
     k = mm(flat, blk.t["wk"]).reshape(n, TOKENS, kv, HEAD_DIM).transpose(0, 2, 1, 3)
     v = mm(flat, blk.t["wv"]).reshape(n, TOKENS, kv, HEAD_DIM).transpose(0, 2, 1, 3)
-    q = l2_normalize(q); k = l2_normalize(k)
-    k = np.repeat(k, GQA_RATIO, axis=1); v = np.repeat(v, GQA_RATIO, axis=1)
+    q = l2_normalize(q)
+    k = l2_normalize(k)
+    k = np.repeat(k, GQA_RATIO, axis=1)
+    v = np.repeat(v, GQA_RATIO, axis=1)
     lg = q @ k.transpose(0, 1, 3, 2)
     if blk.scale_f32 is not None and use_scale_f32:
         # The `2H` run is H FP32 scalars, not 2H FP16 ones -- the "even slots" are the
@@ -90,7 +112,7 @@ def attend(blk, x, mm, shift=0):
     a = a.transpose(0, 2, 1, 3).reshape(n, TOKENS, C)
     pj = blk.t.get("proj")
     if pj is None and use_pre_proj:
-        pj = blk.t.get("pre_proj")          # HYPOTHESIS, see hnet_model._fused_swin
+        pj = blk.t.get("pre_proj")  # HYPOTHESIS, see hnet_model._fused_swin
     if pj is not None:
         a = mm(a.reshape(-1, C).astype(np.float16), pj).reshape(n, TOKENS, C)
     out = window_reverse(a, H, W)
@@ -113,9 +135,12 @@ def resize(x, hw, mode="bilinear"):
         return x[np.ix_(yi, xi, np.arange(C))]
     fy = (np.arange(th) + 0.5) * H / th - 0.5
     fx = (np.arange(tw) + 0.5) * W / tw - 0.5
-    y0 = np.floor(fy).astype(int).clip(0, H - 1); y1 = (y0 + 1).clip(0, H - 1)
-    x0 = np.floor(fx).astype(int).clip(0, W - 1); x1 = (x0 + 1).clip(0, W - 1)
-    wy = (fy - y0).clip(0, 1)[:, None, None]; wx = (fx - x0).clip(0, 1)[None, :, None]
+    y0 = np.floor(fy).astype(int).clip(0, H - 1)
+    y1 = (y0 + 1).clip(0, H - 1)
+    x0 = np.floor(fx).astype(int).clip(0, W - 1)
+    x1 = (x0 + 1).clip(0, W - 1)
+    wy = (fy - y0).clip(0, 1)[:, None, None]
+    wx = (fx - x0).clip(0, 1)[None, :, None]
     top = x[y0][:, x0] * (1 - wx) + x[y0][:, x1] * wx
     bot = x[y1][:, x0] * (1 - wx) + x[y1][:, x1] * wx
     return (top * (1 - wy) + bot * wy).astype(np.float32)
@@ -130,8 +155,11 @@ def refit(x, C):
 
 def main():
     use_gpu = "--gpu" in sys.argv
-    mm = (__import__("xmx").gemm if use_gpu
-          else (lambda A, B: A.astype(np.float32) @ B.astype(np.float32)))
+    mm = (
+        __import__("xmx").gemm
+        if use_gpu
+        else (lambda A, B: A.astype(np.float32) @ B.astype(np.float32))
+    )
     root = HERE.parents[1]
     src = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else None
     if src:
@@ -148,7 +176,11 @@ def main():
         if "--smooth" in sys.argv:
             clean = smooth_pattern(512, 256, seed)
             rng = np.random.default_rng(seed + 1000)
-            img = np.clip(clean + rng.standard_normal(clean.shape).astype(np.float32) * sigma, 0, 1)
+            img = np.clip(
+                clean + rng.standard_normal(clean.shape).astype(np.float32) * sigma,
+                0,
+                1,
+            )
         else:
             clean, img = clean_and_noisy(512, 256, seed=seed, sigma=sigma)
     save(img, root / "work" / "frame_in.png")
@@ -173,13 +205,13 @@ def main():
         # A still frame has no motion, so history == colour and the flags are valid.
         H_, W_ = img.shape[:2]
         inp = np.zeros((H_, W_, 16), np.float32)
-        inp[:, :, 4:7] = img[:, :, :3]      # colour
-        inp[:, :, 7:10] = img[:, :, :3]     # history: a still frame reprojects to itself
-        inp[:, :, 12:15] = 1.0              # validity flags, selp picks +1
+        inp[:, :, 4:7] = img[:, :, :3]  # colour
+        inp[:, :, 7:10] = img[:, :, :3]  # history: a still frame reprojects to itself
+        inp[:, :, 12:15] = 1.0  # validity flags, selp picks +1
         x = (inp.reshape(-1, 16) @ stem.astype(np.float32)).reshape(H_, W_, 32)
         stem_note = "input_adapter 16->32"
     else:
-        x = refit(img.astype(np.float32), 32)      # STAND-IN
+        x = refit(img.astype(np.float32), 32)  # STAND-IN
         stem_note = "STAND-IN (RGB tiled to 32)"
     # `x0` runs the identical scaffolding -- the same resamples, the same skip
     # blends -- with every network branch omitted. Scoring against it separates
@@ -199,8 +231,9 @@ def main():
     globals()["use_true_softmax"] = "--true-softmax" in sys.argv
     globals()["use_exp_scale"] = "--exp-scale" in sys.argv
     globals()["use_scale_f32"] = "--scale-f16" not in sys.argv
-    globals()["branch_gain"] = (float(sys.argv[sys.argv.index("--branch-gain") + 1])
-                                if "--branch-gain" in sys.argv else 1.0)
+    globals()["branch_gain"] = (
+        float(sys.argv[sys.argv.index("--branch-gain") + 1]) if "--branch-gain" in sys.argv else 1.0
+    )
     use_attend = "--no-attend" not in sys.argv
     use_ffn = "--no-ffn" not in sys.argv
     trace = "--trace" in sys.argv
@@ -227,10 +260,14 @@ def main():
         if blk.index in skips:
             s_ = refit(resize(skips.pop(blk.index), x.shape[:2]), x.shape[-1])
             s0 = refit(resize(skips0.pop(blk.index), x0.shape[:2]), x0.shape[-1])
-            x0 = (x0 + s0 if skip_mode == "add" else
-                  0.5 * (x0 + s0) if skip_mode == "mean" else
-                  (x0 + s0) * (np.sqrt((x0 * x0).mean())
-                               / max(float(np.sqrt(((x0 + s0) ** 2).mean())), 1e-9)))
+            x0 = (
+                x0 + s0
+                if skip_mode == "add"
+                else 0.5 * (x0 + s0)
+                if skip_mode == "mean"
+                else (x0 + s0)
+                * (np.sqrt((x0 * x0).mean()) / max(float(np.sqrt(((x0 + s0) ** 2).mean())), 1e-9))
+            )
             # The kernel is named SubtiledSkipBlend -- "blend", not "add". A plain
             # sum doubles the magnitude at each of the five levels, which is a good
             # candidate for the scale drift in the output.
@@ -245,7 +282,7 @@ def main():
         if use_shift and blk.kind in ("fused_swin", "split_swin_16h"):
             stage_pos[blk.C] = stage_pos.get(blk.C, 0) + 1
             sh = 4 if stage_pos[blk.C] % 2 == 0 else 0
-        use_rs = "--resample" in sys.argv   # OPT-IN: costs quality, see notes/phase5-resample.md
+        use_rs = "--resample" in sys.argv  # OPT-IN: costs quality, see notes/phase5-resample.md
         if use_rs and blk.resample is not None and blk.resample_at == "front":
             # RECOVERED upsample: applied before the block does its work.
             H_, W_, C_ = x.shape
@@ -263,23 +300,41 @@ def main():
             wv = blk.t["weight"].astype(np.float32).reshape(512, 512)
             bv = blk.t["bias"].astype(np.float32)
             x = (mm(xs.reshape(-1, 512).astype(np.float16), wv) + bv).reshape(
-                GEOMETRY[512][0], GEOMETRY[512][1], 512)
-        br = (attend(blk, x, mm, sh)
-              if (use_attend and blk.kind in ("fused_swin", "split_swin_16h")) else None)
+                GEOMETRY[512][0], GEOMETRY[512][1], 512
+            )
+        br = (
+            attend(blk, x, mm, sh)
+            if (use_attend and blk.kind in ("fused_swin", "split_swin_16h"))
+            else None
+        )
         if br is not None and branch_gain != 1.0:
             br = br * branch_gain
         if br is not None:
-            g = next((blk.t[n] for n in ("gate", "ffwd_gate", "ffwd_proj_gate")
-                      if n in blk.t and blk.t[n].size == blk.C), None)
+            g = next(
+                (
+                    blk.t[n]
+                    for n in ("gate", "ffwd_gate", "ffwd_proj_gate")
+                    if n in blk.t and blk.t[n].size == blk.C
+                ),
+                None,
+            )
             if trace:
                 gs = float(np.abs(g.astype(np.float32)).mean()) if g is not None else 1.0
-                print("   blk%-3d C=%-5d trunk sd %.4g  branch sd %.4g  |gate| %.4g"
-                      "  -> branch/trunk %.3g"
-                      % (blk.index, blk.C, x.std(), br.std(), gs,
-                         br.std() * gs / max(float(x.std()), 1e-30)))
+                print(
+                    "   blk%-3d C=%-5d trunk sd %.4g  branch sd %.4g  |gate| %.4g"
+                    "  -> branch/trunk %.3g"
+                    % (
+                        blk.index,
+                        blk.C,
+                        x.std(),
+                        br.std(),
+                        gs,
+                        br.std() * gs / max(float(x.std()), 1e-30),
+                    )
+                )
             x = cos_skip(br, x, g.astype(np.float32), gate_form) if g is not None else x + br
             if use_rs and blk.resample is not None and blk.resample_at == "back":
-                pass                                  # applied after the block, below
+                pass  # applied after the block, below
             if use_ffn and "pre_ffn0" in blk.t:
                 # HYPOTHESIS: the leading region continues [C^2 proj][C^2/2 ffn0][C^2/2 ffn1]
                 H_, W_, C_ = x.shape
@@ -303,70 +358,99 @@ def main():
         out = out4[:, :, :3]
         head_note = "out_head 32->4 (RGB = first 3)"
     else:
-        out = x[:, :, :3]                           # STAND-IN
+        out = x[:, :, :3]  # STAND-IN
         head_note = "STAND-IN (first 3 channels)"
     lo, hi = float(out.min()), float(out.max())
     norm = (out - lo) / max(hi - lo, 1e-9)
     save(norm, root / "work" / "frame_out.png")
-    out0 = (x0.reshape(-1, 32) @ head).reshape(x0.shape[0], x0.shape[1], 4)[:, :, :3] \
-        if (head is not None and "--slice-head" not in sys.argv) else x0[:, :, :3]
+    out0 = (
+        (x0.reshape(-1, 32) @ head).reshape(x0.shape[0], x0.shape[1], 4)[:, :, :3]
+        if (head is not None and "--slice-head" not in sys.argv)
+        else x0[:, :, :3]
+    )
     lo0, hi0 = float(out0.min()), float(out0.max())
     norm0 = (out0 - lo0) / max(hi0 - lo0, 1e-9)
 
     print("=== frame through the recovered network (%s) ===" % ("XMX" if use_gpu else "CPU"))
-    print("   input   %s  range [%.3f, %.3f]" % (img.shape, img.min(), img.max()))
-    print("   output  %s  range [%.4g, %.4g]  sd %.4g" % (out.shape, lo, hi, out.std()))
-    print("   wall    %.1f s" % dt)
+    print(f"   input   {img.shape}  range [{img.min():.3f}, {img.max():.3f}]")
+    print(f"   output  {out.shape}  range [{lo:.4g}, {hi:.4g}]  sd {out.std():.4g}")
+    print(f"   wall    {dt:.1f} s")
     # how much of the input structure survived?
     a = img[:, :, :3].reshape(-1)
     b = np.repeat(norm.reshape(-1, 3), 1, axis=0).reshape(-1)
     c = float(np.corrcoef(a, b)[0, 1])
-    print("   correlation of output with input: %+.4f   skips=%s(%s) shift=%s proj=%s ffn=%s gate=%s"
-          % (c, use_skips, skip_mode, use_shift, use_pre_proj, use_ffn, gate_form))
-    print("   stem:      %s" % stem_note)
-    print("   head:      %s" % head_note)
-    print("   attention: on=%s scale=%s exp_scale=%s branch_gain=%g"
-          % (use_attend, "fp32-pairs" if use_scale_f32 else "f16-odd-slots",
-             use_exp_scale, branch_gain))
-    print("   attention: %s   bias=%s"
-          % ("textbook max-subtracted softmax" if use_true_softmax
-             else "PTX clamped softmax (logits +-6, bit-trick exp)", use_attn_bias))
+    print(
+        f"   correlation of output with input: {c:+.4f}   skips={use_skips}({skip_mode}) shift={use_shift} proj={use_pre_proj} ffn={use_ffn} gate={gate_form}"
+    )
+    print(f"   stem:      {stem_note}")
+    print(f"   head:      {head_note}")
+    print(
+        "   attention: on={} scale={} exp_scale={} branch_gain={:g}".format(
+            use_attend,
+            "fp32-pairs" if use_scale_f32 else "f16-odd-slots",
+            use_exp_scale,
+            branch_gain,
+        )
+    )
+    print(
+        "   attention: {}   bias={}".format(
+            "textbook max-subtracted softmax"
+            if use_true_softmax
+            else "PTX clamped softmax (logits +-6, bit-trick exp)",
+            use_attn_bias,
+        )
+    )
     base, _ = denoise_score(clean, img)
     got, keep = denoise_score(clean, norm)
     # A pure pass-through scores exactly 1.00x, so a score near 1.0 is not a result --
     # it means the network was bypassed. Correlation with the input at 1.0000 is the
     # giveaway: the output is a linear function of the input and nothing else.
     if got == float("inf"):
-        verdict = "COLLAPSED (kept %.3f of the spread)" % keep
+        verdict = f"COLLAPSED (kept {keep:.3f} of the spread)"
     elif abs(c) > 0.9995:
-        verdict = "PASS-THROUGH -- the network contributed nothing (corr %+.4f)" % c
+        verdict = f"PASS-THROUGH -- the network contributed nothing (corr {c:+.4f})"
     elif got < base:
         verdict = "IMPROVED %.2fx" % (base / got)
     else:
         verdict = "WORSE %.2fx" % (got / base)
-    print("   denoise: input %.5f -> output %s   spread kept %.3f   %s"
-          % (base, ("inf" if got == float("inf") else "%.5f" % got), keep, verdict))
+    print(
+        "   denoise: input {:.5f} -> output {}   spread kept {:.3f}   {}".format(
+            base, ("inf" if got == float("inf") else f"{got:.5f}"), keep, verdict
+        )
+    )
     # What did the NETWORK do, as opposed to the resampling and skip scaffolding it
     # sits in? `scaf` is the same pipeline with every branch removed.
     scaf, _ = denoise_score(clean, norm0)
     moved = float(np.abs(norm - norm0).mean() / max(float(np.abs(norm0).mean()), 1e-30))
-    print("   scaffolding alone (no branches): %.5f   network moved the frame by %.3g relative"
-          % (scaf, moved))
+    print(
+        f"   scaffolding alone (no branches): {scaf:.5f}   network moved the frame by {moved:.3g} relative"
+    )
     if moved < 1e-3:
-        print("   NETWORK-INERT -- the branches contribute nothing; this score measures"
-              " the stand-in resampling and skip blend, not the recovered model")
+        print(
+            "   NETWORK-INERT -- the branches contribute nothing; this score measures"
+            " the stand-in resampling and skip blend, not the recovered model"
+        )
     else:
-        print("   network vs its own scaffolding: %s %.3fx"
-              % ("BETTER" if got < scaf else "worse", max(scaf, got) / max(min(scaf, got), 1e-30)))
-    print("   output/input scale: sd %.3f vs %.3f   mean %+.3f vs %+.3f"
-          % (out.std(), img.std(), out.mean(), img.mean()))
+        print(
+            "   network vs its own scaffolding: {} {:.3f}x".format(
+                "BETTER" if got < scaf else "worse",
+                max(scaf, got) / max(min(scaf, got), 1e-30),
+            )
+        )
+    print(
+        f"   output/input scale: sd {out.std():.3f} vs {img.std():.3f}   mean {out.mean():+.3f} vs {img.mean():+.3f}"
+    )
     # seam metric: energy at the 8-pixel window boundaries versus everywhere else
     g = norm.mean(axis=2)
-    dv = np.abs(np.diff(g, axis=0)); dh = np.abs(np.diff(g, axis=1))
-    bv = dv[7::8].mean(); ov = np.delete(dv, np.arange(7, dv.shape[0], 8), axis=0).mean()
-    bh = dh[:, 7::8].mean(); oh = np.delete(dh, np.arange(7, dh.shape[1], 8), axis=1).mean()
-    print("   window-seam ratio (boundary gradient / interior): %.3f vertical, %.3f horizontal"
-          % (bv / max(ov, 1e-9), bh / max(oh, 1e-9)))
+    dv = np.abs(np.diff(g, axis=0))
+    dh = np.abs(np.diff(g, axis=1))
+    bv = dv[7::8].mean()
+    ov = np.delete(dv, np.arange(7, dv.shape[0], 8), axis=0).mean()
+    bh = dh[:, 7::8].mean()
+    oh = np.delete(dh, np.arange(7, dh.shape[1], 8), axis=1).mean()
+    print(
+        f"   window-seam ratio (boundary gradient / interior): {bv / max(ov, 1e-9):.3f} vertical, {bh / max(oh, 1e-9):.3f} horizontal"
+    )
     print("   wrote work/frame_in.png and work/frame_out.png")
     return 0
 

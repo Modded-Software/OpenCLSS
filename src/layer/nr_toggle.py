@@ -17,16 +17,20 @@ a fullscreen game has focus, so the binding has to be a desktop global shortcut 
 has to be made by the desktop's own settings, not by this script. See `install`: doing it
 from here crashed KWin, and the crash is worth reading about before anyone tries again.
 """
+
 import os
 import pathlib
 import subprocess
 import sys
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import nr_paths                                                        # noqa: E402
+import nr_paths
 
 HERE = pathlib.Path(__file__).resolve().with_name("nr-toggle")
-DESKTOPS = pathlib.Path(os.environ.get("XDG_DATA_HOME", pathlib.Path.home() / ".local/share")) / "applications"
+
+DESKTOPS = (
+    pathlib.Path(os.environ.get("XDG_DATA_HOME", pathlib.Path.home() / ".local/share"))
+    / "applications"
+)
 SHORTCUTS = (
     # argument to this script, a key worth suggesting, what to call it
     ("", "Meta+N", "Neural rendering on/off"),
@@ -40,13 +44,25 @@ def notify(title, body):
     print(f"{title} - {body}")
     try:
         subprocess.run(
-            ["notify-send", "-a", "neural rendering", "-t", "1600",
-             # both spellings: the hint that replaces the previous notification in place
-             # rather than stacking one per keypress is server-specific
-             "-h", "string:x-canonical-private-synchronous:nr-toggle",
-             "-h", "string:x-kde-display-appname:neural rendering",
-             title, body],
-            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+            [
+                "notify-send",
+                "-a",
+                "neural rendering",
+                "-t",
+                "1600",
+                # both spellings: the hint that replaces the previous notification in place
+                # rather than stacking one per keypress is server-specific
+                "-h",
+                "string:x-canonical-private-synchronous:nr-toggle",
+                "-h",
+                "string:x-kde-display-appname:neural rendering",
+                title,
+                body,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+        )
     except (OSError, subprocess.SubprocessError) as error:
         sys.stderr.write(f"nr-toggle: no desktop notification: {error}\n")
 
@@ -85,16 +101,21 @@ def temporal():
     now = float(values.get("temporal", 1.0)) > 0
     values["temporal"] = 0.0 if now else 1.0
     nr_paths.write(values)
-    notify("Temporal path off" if now else "Temporal path ON",
-           "the picture will flicker again" if now
-           else "previous frame carried forward, gated per pixel")
+    notify(
+        "Temporal path off" if now else "Temporal path ON",
+        "the picture will flicker again"
+        if now
+        else "previous frame carried forward, gated per pixel",
+    )
     return 0
 
 
 def status():
     values = nr_paths.read()
     print(f"  effect     {'ON' if nr_paths.TRIGGER.exists() else 'off'}  ({nr_paths.TRIGGER})")
-    print(f"  daemon     {'listening' if nr_paths.alive() else 'not answering'}  ({nr_paths.SOCKET})")
+    print(
+        f"  daemon     {'listening' if nr_paths.alive() else 'not answering'}  ({nr_paths.SOCKET})"
+    )
     print(f"  temporal   {values.get('temporal', '(daemon default: 1)')}")
     print(f"  hold       {values.get('hold', '(daemon default: 1)')}")
     print(f"  scale      {values.get('render_scale', '(daemon default)')}")
@@ -128,9 +149,22 @@ def bound_key(argument):
             continue
         for tool in ("kreadconfig6", "kreadconfig5"):
             try:
-                got = subprocess.run([tool, "--file", "kglobalshortcutsrc", "--group", "services",
-                                      "--group", entry.name, "--key", "_launch"],
-                                     capture_output=True, text=True, timeout=5)
+                got = subprocess.run(
+                    [
+                        tool,
+                        "--file",
+                        "kglobalshortcutsrc",
+                        "--group",
+                        "services",
+                        "--group",
+                        entry.name,
+                        "--key",
+                        "_launch",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
             except (OSError, subprocess.SubprocessError) as error:
                 sys.stderr.write(f"nr-toggle: {tool} unavailable: {error}\n")
                 continue
@@ -167,8 +201,12 @@ def install(_keys=None):
         print(f"      {name}   (suggested {key})\n")
     for settings in ("systemsettings", "systemsettings5"):
         if subprocess.run(["which", settings], capture_output=True).returncode == 0:
-            subprocess.Popen([settings, "kcm_keys"], stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
+            subprocess.Popen(
+                [settings, "kcm_keys"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
             print("  opening that page now.")
             break
     print("  `nr-toggle status` will show the keys once they are set.")

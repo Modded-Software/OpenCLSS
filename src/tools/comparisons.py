@@ -13,16 +13,15 @@ box) divided by the region's own mean, because on this model the level moves and
 colour change is the mean absolute difference, in levels of 255. Nothing here is published by
 running it: the images go to the orphan `media` branch only when the owner has seen them.
 """
+
 import argparse
 import pathlib
 import subprocess
-import sys
 import tempfile
 
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src" / "ref"))
 import image_io
 
 # The captures of 2026-09-16, by game: work/<capture>/NNN_{in,out}.png from the daemon's dump.
@@ -31,14 +30,44 @@ ORIGINAL = {"tekken": "tekken", "doa5": "doa5cap", "mk1": "mk1cap"}
 # (y0, y1, x0, x1) in the captured frame.
 IMAGES = {
     # two crops enlarged 2x, a row each, the sheet scaled to 1200 wide
-    "tekken7-dragunov": dict(game="tekken", frame=3, crops=[(170, 520, 770, 1090), (590, 880, 700, 1020)],
-                             enlarge=2, stack="rows", width=1200, quality=92),
-    "doa5-closeup": dict(game="doa5", frame=8, crops=[(60, 640, 640, 1160)], stack="rows", quality=92),
-    "doa5-fire": dict(game="doa5", frame=18, crops=[(40, 640, 1080, 1600)], stack="rows", quality=92),
-    "mk1-faces": dict(game="mk1", frame=27, crops=[(40, 560, 920, 1520), (60, 580, 40, 640)],
-                      stack="rows", quality=92),
+    "tekken7-dragunov": {
+        "game": "tekken",
+        "frame": 3,
+        "crops": [(170, 520, 770, 1090), (590, 880, 700, 1020)],
+        "enlarge": 2,
+        "stack": "rows",
+        "width": 1200,
+        "quality": 92,
+    },
+    "doa5-closeup": {
+        "game": "doa5",
+        "frame": 8,
+        "crops": [(60, 640, 640, 1160)],
+        "stack": "rows",
+        "quality": 92,
+    },
+    "doa5-fire": {
+        "game": "doa5",
+        "frame": 18,
+        "crops": [(40, 640, 1080, 1600)],
+        "stack": "rows",
+        "quality": 92,
+    },
+    "mk1-faces": {
+        "game": "mk1",
+        "frame": 27,
+        "crops": [(40, 560, 920, 1520), (60, 580, 40, 640)],
+        "stack": "rows",
+        "quality": 92,
+    },
     # the whole frame, the game's above the pass's
-    "mk1-fight": dict(game="mk1", frame=37, crops=[None], stack="column", quality=90),
+    "mk1-fight": {
+        "game": "mk1",
+        "frame": 37,
+        "crops": [None],
+        "stack": "column",
+        "quality": 90,
+    },
 }
 
 # The README's table: image, region, where, and whether its brightness is shown.
@@ -56,15 +85,29 @@ TABLE = [
     ("", "the whole fight frame", "mk1", 37, None, True),
 ]
 
-LABEL = ["-font", "Adwaita-Sans", "-pointsize", "26", "-fill", "white", "-undercolor", "#000000A0",
-         "-gravity", "northwest", "-annotate", "+12+10"]
+LABEL = [
+    "-font",
+    "Adwaita-Sans",
+    "-pointsize",
+    "26",
+    "-fill",
+    "white",
+    "-undercolor",
+    "#000000A0",
+    "-gravity",
+    "northwest",
+    "-annotate",
+    "+12+10",
+]
 GAP = "#e8e8e8"
 
 
 def pair(folders, game, frame):
     folder = folders[game]
-    return (image_io.load(folder / f"{frame:03d}_in.png"),
-            image_io.load(folder / f"{frame:03d}_out.png"))
+    return (
+        image_io.load(folder / f"{frame:03d}_in.png"),
+        image_io.load(folder / f"{frame:03d}_out.png"),
+    )
 
 
 def cut(image, crop, enlarge=1):
@@ -79,7 +122,10 @@ def build(folders, name, spec, out, room):
     rows = []
     for index, crop in enumerate(spec["crops"]):
         parts = []
-        for tag, image, text in (("b", before, " Game "), ("a", after, " DLSS-NR on Intel Xe2 ")):
+        for tag, image, text in (
+            ("b", before, " Game "),
+            ("a", after, " DLSS-NR on Intel Xe2 "),
+        ):
             raw = room / f"{index}{tag}.png"
             image_io.save(cut(image, crop, spec.get("enlarge", 1)), raw)
             labelled = room / f"{index}{tag}_l.png"
@@ -88,8 +134,19 @@ def build(folders, name, spec, out, room):
         row = room / f"row{index}.png"
         join = "-append" if spec["stack"] == "column" else "+append"
         spacer = "1x8" if spec["stack"] == "column" else "8x1"
-        subprocess.run(["magick", parts[0], "-size", spacer, f"xc:{GAP}", parts[1], join, str(row)],
-                       check=True)
+        subprocess.run(
+            [
+                "magick",
+                parts[0],
+                "-size",
+                spacer,
+                f"xc:{GAP}",
+                parts[1],
+                join,
+                str(row),
+            ],
+            check=True,
+        )
         rows.append(str(row))
     command = ["magick", rows[0]]
     for row in rows[1:]:
@@ -99,7 +156,7 @@ def build(folders, name, spec, out, room):
     if spec.get("width"):
         command += ["-resize", f"{spec['width']}x"]
     target = out / f"{name}.jpg"
-    subprocess.run(command + ["-strip", "-quality", str(spec["quality"]), str(target)], check=True)
+    subprocess.run([*command, "-strip", "-quality", str(spec["quality"]), str(target)], check=True)
     return target
 
 
@@ -117,28 +174,45 @@ def stats(a, b):
     la, lb = luma(a), luma(b)
     ta = np.sqrt(((la - box(la)) ** 2).mean()) / la.mean()
     tb = np.sqrt(((lb - box(lb)) ** 2).mean()) / lb.mean()
-    return la.mean() * 255, lb.mean() * 255, 100 * (tb / ta - 1), float(np.abs(b - a).mean() * 255)
+    return (
+        la.mean() * 255,
+        lb.mean() * 255,
+        100 * (tb / ta - 1),
+        float(np.abs(b - a).mean() * 255),
+    )
 
 
 def table(folders):
-    rows = ["| image | region | brightness | relative texture | colour change |",
-            "| --- | --- | --- | ---: | ---: |"]
+    rows = [
+        "| image | region | brightness | relative texture | colour change |",
+        "| --- | --- | --- | ---: | ---: |",
+    ]
     for image, region, game, frame, where, bright in TABLE:
         before, after = pair(folders, game, frame)
         l0, l1, texture, colour = stats(cut(before, where), cut(after, where))
-        rows.append(f"| {image} | {region} | {f'{l0:.0f} -> {l1:.0f}' if bright else ''} "
-                    f"| {texture:+.0f} % | {colour:.1f} |")
+        rows.append(
+            f"| {image} | {region} | {f'{l0:.0f} -> {l1:.0f}' if bright else ''} "
+            f"| {texture:+.0f} % | {colour:.1f} |"
+        )
     return "\n".join(rows)
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("captures", nargs="?", type=pathlib.Path,
-                        help="a folder with tekken/, doa5/ and mk1/ re-rendered by restill.py")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "captures",
+        nargs="?",
+        type=pathlib.Path,
+        help="a folder with tekken/, doa5/ and mk1/ re-rendered by restill.py",
+    )
     parser.add_argument("out", type=pathlib.Path)
-    parser.add_argument("--original", action="store_true",
-                        help="the captures as taken, from work/tekken, work/doa5cap, work/mk1cap")
+    parser.add_argument(
+        "--original",
+        action="store_true",
+        help="the captures as taken, from work/tekken, work/doa5cap, work/mk1cap",
+    )
     args = parser.parse_args()
     if args.original == (args.captures is not None):
         parser.error("give a captures folder or --original, not both")

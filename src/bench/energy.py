@@ -5,12 +5,17 @@ RAPL counts the whole SoC - CPU, GPU and memory controller share one package her
 which is the honest number for a shared-memory part: there is no separate board power
 to quote. Idle is measured either side and subtracted, so what is left is the frame.
 """
-import pathlib, sys, time
+
+import pathlib
+import sys
+import time
+
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src" / "gpu")); sys.path.insert(0, str(ROOT / "src" / "ref"))
-import xmxres, nr_model, nr_frame_resident as F
+import nr_frame_resident as F
+import nr_model
+from xmxrt.recorder import Recorder
 
 RAPL = pathlib.Path("/sys/class/powercap/intel-rapl:0/energy_uj")
 WRAP = int(pathlib.Path("/sys/class/powercap/intel-rapl:0/max_energy_range_uj").read_text())
@@ -36,8 +41,10 @@ def idle_watts(seconds=3.0):
 
 
 H, W = (int(sys.argv[1]), int(sys.argv[2])) if len(sys.argv) > 2 else (768, 1280)
-model = nr_model.NeuralRenderingModel.from_safetensors(ROOT / "work" / "mlxw" / "dlssnr-logical.safetensors")
-rt = xmxres.Runtime()
+model = nr_model.NeuralRenderingModel.from_safetensors(
+    ROOT / "work" / "mlxw" / "dlssnr-logical.safetensors"
+)
+rt = Recorder()
 frame = F.ResidentFrame(rt, model.weights, H, W)
 features = (np.random.default_rng(11).standard_normal((H, W, 16)) * 0.3).astype(np.float32)
 frame.run(features)
@@ -57,4 +64,6 @@ print(f"  during the run    {package:6.2f} W   over {count} frames in {elapsed:.
 print(f"  frame             {1000 * per_frame:6.0f} ms")
 print(f"  energy per frame  {energy / count:6.2f} J package, {attributable:5.2f} J above idle")
 print(f"  arithmetic        {459.6 / 1e3 * (H * W) / (768 * 1280):.2f} TFLOP per frame")
-print(f"  efficiency        {459.6e9 * (H * W) / (768 * 1280) / max(attributable, 1e-9) / 1e9:6.1f} GFLOP per joule")
+print(
+    f"  efficiency        {459.6e9 * (H * W) / (768 * 1280) / max(attributable, 1e-9) / 1e9:6.1f} GFLOP per joule"
+)

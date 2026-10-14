@@ -1730,7 +1730,7 @@ struct buffer *A = slot(c->a), *B = slot(c->b), *C = slot(c->c);
 	unsigned transposed = c->bt & 1u;
 	unsigned epilogue = (c->bt >> 8) & 0xFu, narrow = (c->bt >> 12) & 1u;
 	unsigned compact = (c->bt >> 16) & 1u;
-	/* zero means dense, exactly as xmxres.gemm documents; resolved here so the kernel
+	/* zero means dense, exactly as xmxrt/gemm.py documents; resolved here so the kernel
 	 * never has to. lda is A's row stride, ldb B's (K when B is stored transposed), ldc C's. */
 	cl_uint lda = c->lda ? c->lda : c->K;
 	cl_uint ldb = c->ldb ? c->ldb : (transposed ? c->K : c->N);
@@ -1899,7 +1899,7 @@ static int run_attn(const struct cmd *c)
 static int run_unary(const struct cmd *c);
 static int run_row(const struct cmd *c);
 
-/* The model's own kinds; see xmxres.py (GRAPH, HOST_READ, HOST_WRITE). */
+/* The model's own kinds; see xmxrt/ops.py (GRAPH, HOST_READ, HOST_WRITE). */
 #define BUF_GRAPH 0
 #define BUF_HOST_READ 1
 #define BUF_HOST_WRITE 2
@@ -2874,7 +2874,7 @@ int xmx_rec_gemm_window_residual_pool(int a, int b, int skip_out, int skip, int 
 }
 /* A 32-channel window block's attention half as the three passes it replaces:
  * gemm_qkv_window, merged window attention, and the window residual - or, for the head,
- * the residual and the compact head GEMM. See xmxres.window_block. */
+ * the residual and the compact head GEMM. See xmxrt/attention.py window_block. */
 int xmx_rec_window_block(int image, int qkv, int projection, int target, int bias, int cosine,
 			 int scale, int extra, unsigned windows, unsigned height, unsigned width,
 			 unsigned across, unsigned pad, unsigned flags)
@@ -2936,7 +2936,7 @@ int xmx_rec_window_block(int image, int qkv, int projection, int target, int bia
 					 across, pad))
 		return -1;
 	/* N is always 16; compact stores the first four columns (ldc 4), the wide build all
-	 * sixteen (ldc 16). See xmxres.gemm compact_output. */
+	 * sixteen (ldc 16). See xmxrt/gemm.py compact_output. */
 	if (xmx_rec_gemm(out16, extra, target, pixels, 16u, 32u, 1, 0, 0, 0,
 			 head16 ? 0u : (1u << 16), 0, 0, head16 ? 0u : 4u, 0, 0, 0))
 		return -1;

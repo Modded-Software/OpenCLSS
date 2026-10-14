@@ -7,23 +7,24 @@ requires-python = ">=3.13"
 dependencies = [
     "numpy==2.5.4",
     "safetensors==0.8.0",
-    # `compression.zstd` is standard library from Python 3.14 (PEP 784); this
-    # backport carries `src/tools/extract_modules.py` on older interpreters too.
     "zstandard==0.25.0",
+    "opencv-python==5.0.0.93",
+    "torch==2.14.1",
 ]
 
-[project.optional-dependencies]
-# Verification-only tools. They are not needed to run the layer, the daemon or the
-# resident graph, so they stay out of the default install and must be asked for.
-check = [
-    "torch==2.14.1",
-    "opencv-python==4.14.0.94",
-]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# One directory per source root: an editable install puts each on `sys.path`, so the
+# modules import by their own names (`xmx`, `nr_model`, `nr_build`, `xmxrt`) with no
+# per-file path setup.
+[tool.hatch.build]
+dev-mode-dirs = ["src", "src/gpu", "src/ref", "src/bench", "src/layer", "src/tools", "scripts"]
 
 [tool.uv]
-# This project targets Intel Xe2. The `check` extra only needs torch for a
-# reference comparison, so pull the CPU wheels: the default index would install
-# the entire NVIDIA CUDA stack.
+# This project targets Intel Xe2, so pull the CPU torch wheels: the default index would
+# install the entire NVIDIA CUDA stack.
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
@@ -31,3 +32,40 @@ explicit = true
 
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
+
+[project.optional-dependencies]
+# Quality-gate tooling, kept out of the default install. The hooks and
+# `make lint` / `make type-check` sync it with `uv run --extra dev`.
+dev = [
+    "mypy==2.3.1",
+    "pytest==9.1.1",
+    "ruff==0.16.8",
+]
+
+[tool.mypy]
+warn_unused_configs = true
+namespace_packages = true
+explicit_package_bases = true
+exclude = [
+    "(?x)(^\\.venv/|^work/|^build/|^__pycache__/|.*\\.egg-info/|^\\.pytest_cache/)",
+]
+# The tree is not annotated yet, so mypy runs here in a deferred mode: the
+# module graph is followed for every file, but the codes that only fire because
+# of missing annotations are silenced until the annotations land. The exact list
+# and the counts behind each entry are in docs/QUALITY-GATES.md. Removing a code
+# from this list (and running `uv run mypy .`) shows what still needs annotating.
+ignore_missing_imports = true
+disable_error_code = [
+    "var-annotated",  # empty collection without an annotation
+    "arg-type",       # argument types inferred only from unannotated callables
+    "attr-defined",   # win32-only ctypes attributes, seen on Linux
+    "operator",       # operators on values whose type came from an untyped call
+    "assignment",     # assignments between values of unannotated functions
+    "union-attr",     # optional attribute reached through an untyped value
+    "misc",           # assorted inference gaps from unannotated signatures
+    "name-defined",   # string annotations on not-yet-annotated classes
+]
+
+[[tool.mypy.overrides]]
+module = ["cv2", "cv2.*"]
+ignore_missing_imports = true

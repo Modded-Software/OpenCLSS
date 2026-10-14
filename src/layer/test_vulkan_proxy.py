@@ -14,6 +14,7 @@ Python stands in for the game:
 The DLL is work/nr_vulkan_proxy.dll, which build_win.bat builds. Exits 77, skipped, off
 Windows, from a 32-bit Python, or when the DLL is not built.
 """
+
 import json
 import os
 import pathlib
@@ -26,7 +27,7 @@ import tempfile
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 FAILURES = []
-CHILD = r'''
+CHILD = r"""
 import ctypes, json, os, pathlib, sys
 from ctypes import wintypes
 folder = pathlib.Path(sys.argv[1]); case = sys.argv[2]
@@ -71,11 +72,14 @@ print(json.dumps({"exe": me, "pid": os.getpid(), "value": value.value if got els
                   "from_system": any(os.path.samefile(path, os.path.join(system.value, "vulkan-1.dll"))
                                      for path in loaded),
                   "result": result, "version": version.value, "loaded": loaded}))
-'''
+"""
 
 
 def check(name, ok, detail=""):
-    print(f"  [{'ok  ' if ok else 'FAIL'}] {name}{'  ' + detail if detail else ''}", flush=True)
+    print(
+        f"  [{'ok  ' if ok else 'FAIL'}] {name}{'  ' + detail if detail else ''}",
+        flush=True,
+    )
     if not ok:
         FAILURES.append(name)
 
@@ -89,24 +93,37 @@ def run(proxy, case, environment=None, runs=1):
         (folder / "daemon.log").write_bytes(b"x" * 1234)
         if case == "real":
             (folder / "own").mkdir()
-            shutil.copyfile(pathlib.Path(os.environ["SystemRoot"]) / "System32" / "vulkan-1.dll",
-                            folder / "own" / "vulkan-1.dll")
+            shutil.copyfile(
+                pathlib.Path(os.environ["SYSTEMROOT"]) / "System32" / "vulkan-1.dll",
+                folder / "own" / "vulkan-1.dll",
+            )
         started = folder / "started here"
         started.mkdir()
         env = dict(os.environ, **(environment or {}))
         env.pop("NR_TEST_VALUE", None)
         for _ in range(runs):
-            done = subprocess.run([sys.executable, "-c", CHILD, str(folder), case], env=env, cwd=started,
-                                  capture_output=True, text=True, timeout=60)
+            done = subprocess.run(
+                [sys.executable, "-c", CHILD, str(folder), case],
+                env=env,
+                cwd=started,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
             if done.returncode:
                 return {"error": done.stderr.strip()[-400:]}, None, None
         state = folder / "launch-state.json"
         record = json.loads(state.read_text(encoding="utf-8")) if state.exists() else None
         listed = folder / "dlss-nr" / "start-folders.txt"
         # Compared as files while they exist: MSYS2's Python joins paths with /.
-        folders = ([os.path.isdir(line) and os.path.samefile(line, started)
-                    for line in listed.read_text(encoding="utf-8").splitlines()]
-                   if listed.exists() else None)
+        folders = (
+            [
+                os.path.isdir(line) and os.path.samefile(line, started)
+                for line in listed.read_text(encoding="utf-8").splitlines()
+            ]
+            if listed.exists()
+            else None
+        )
         return json.loads(done.stdout.strip().splitlines()[-1]), record, folders
     finally:
         shutil.rmtree(folder, ignore_errors=True)
@@ -116,7 +133,9 @@ def main():
     if os.name != "nt" or struct.calcsize("P") != 8:
         print("skipped: 64-bit Windows Python only")
         return 77
-    proxy = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "work" / "nr_vulkan_proxy.dll"
+    proxy = (
+        pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "work" / "nr_vulkan_proxy.dll"
+    )
     if not proxy.is_file():
         print(f"skipped: no {proxy} (tools\\build_win.bat builds it)")
         return 77
@@ -124,38 +143,67 @@ def main():
     print("the game's own process, started twice:")
     seen, record, folders = run(proxy, "game", runs=2)
     check("it ran", "error" not in seen, seen.get("error", ""))
-    check("the variable is set, UTF-8 read right", seen.get("value") == "it works été", repr(seen.get("value")))
-    check("a Vulkan call reaches the loader", seen.get("result") == 0 and seen.get("version", 0) >= (1 << 22),
-          f"result {seen.get('result')}, version {seen.get('version')}")
+    check(
+        "the variable is set, UTF-8 read right",
+        seen.get("value") == "it works été",
+        repr(seen.get("value")),
+    )
+    check(
+        "a Vulkan call reaches the loader",
+        seen.get("result") == 0 and seen.get("version", 0) >= (1 << 22),
+        f"result {seen.get('result')}, version {seen.get('version')}",
+    )
     # Compared as files, in the child while they exist: MSYS2's Python joins paths with /.
-    check("System32's loader is the one behind it", seen.get("from_system") is True, str(seen.get("loaded")))
-    check("the launch is recorded", record is not None and record.get("pid") == seen.get("pid")
-          and record.get("daemon_start_bytes") == 1234 and record.get("exit_code") is None
-          and record.get("game_exe") == seen.get("exe"), str(record))
+    check(
+        "System32's loader is the one behind it",
+        seen.get("from_system") is True,
+        str(seen.get("loaded")),
+    )
+    check(
+        "the launch is recorded",
+        record is not None
+        and record.get("pid") == seen.get("pid")
+        and record.get("daemon_start_bytes") == 1234
+        and record.get("exit_code") is None
+        and record.get("game_exe") == seen.get("exe"),
+        str(record),
+    )
     check("the folder it was started in is listed, once", folders == [True], str(folders))
 
     print("the game's path spelt otherwise (upper case):")
     seen, record, folders = run(proxy, "spelling")
-    check("it is still the game", seen.get("value") == "it works été" and record is not None,
-          repr(seen.get("value")))
+    check(
+        "it is still the game",
+        seen.get("value") == "it works été" and record is not None,
+        repr(seen.get("value")),
+    )
 
     print("another executable in the folder:")
     seen, record, folders = run(proxy, "other")
-    check("nothing is set", "error" not in seen and seen.get("value") is None, str(seen.get("value")))
+    check(
+        "nothing is set",
+        "error" not in seen and seen.get("value") is None,
+        str(seen.get("value")),
+    )
     check("Vulkan still works", seen.get("result") == 0)
     check("no launch is recorded, no folder listed", record is None and folders is None)
 
     print("DISABLE_NR_PROXY=1:")
     seen, record, folders = run(proxy, "game", {"DISABLE_NR_PROXY": "1"})
-    check("nothing is set, nothing recorded", seen.get("value") is None and record is None
-          and folders is None)
+    check(
+        "nothing is set, nothing recorded",
+        seen.get("value") is None and record is None and folders is None,
+    )
     check("Vulkan still works", seen.get("result") == 0)
 
     print("the game's own loader, set aside:")
     seen, record, folders = run(proxy, "real")
-    check("calls go to the loader NR_REAL_VULKAN names",
-          seen.get("result") == 0 and any(path.lower().endswith("\\own\\vulkan-1.dll") for path in seen.get("loaded", [])),
-          str(seen.get("loaded")))
+    check(
+        "calls go to the loader NR_REAL_VULKAN names",
+        seen.get("result") == 0
+        and any(path.lower().endswith("\\own\\vulkan-1.dll") for path in seen.get("loaded", [])),
+        str(seen.get("loaded")),
+    )
 
     if FAILURES:
         print(f"\n{len(FAILURES)} FAILED: " + ", ".join(FAILURES), flush=True)

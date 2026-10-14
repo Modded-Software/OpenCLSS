@@ -23,6 +23,7 @@ Columns: `ms` is the median wall time of a whole frame (resample + update), `wri
 of `nr_frame_update` - feature assembly and the composition. `head` is a hash of the last
 frame's head: an A/B whose two sides differ there is not the same computation.
 """
+
 import argparse
 import hashlib
 import json
@@ -34,14 +35,18 @@ import time
 
 import numpy as np
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src" / "ref"))
-
 # live_rates.PLAN, so the two tables can be read side by side
-PLAN = ((512, 288, 0.35), (512, 288, 0.50), (640, 360, 0.35), (640, 360, 0.50),
-        (854, 480, 0.50), (1024, 768, 0.55), (1920, 1080, 0.55))
-HOLD = 1.0          # nr_knobs' default hold
-HOLD_RAMP = 4.0     # nr_frame.HOLD_RAMP
+PLAN = (
+    (512, 288, 0.35),
+    (512, 288, 0.50),
+    (640, 360, 0.35),
+    (640, 360, 0.50),
+    (854, 480, 0.50),
+    (1024, 768, 0.55),
+    (1920, 1080, 0.55),
+)
+HOLD = 1.0  # nr_knobs' default hold
+HOLD_RAMP = 4.0  # nr_frame.HOLD_RAMP
 
 
 def frame(width, height, index, base_seed=7):
@@ -54,7 +59,7 @@ def frame(width, height, index, base_seed=7):
     side = max(8, min(height, width) // 4)
     x = (index * 8) % max(1, width - side)
     y = (height - side) // 2
-    image[y:y + side, x:x + side] = np.float32(1.0) - image[y:y + side, x:x + side]
+    image[y : y + side, x : x + side] = np.float32(1.0) - image[y : y + side, x : x + side]
     # 8-bit values, as a decoded swapchain frame holds
     return np.round(np.clip(image, 0, 1) * 255) / np.float32(255)
 
@@ -72,18 +77,20 @@ def resample(image, size):
     if image.shape[:2] == (height, width):
         return image
     import nr_image
+
     if nr_image.library() is not None:
         if image.shape[0] % height == 0 and image.shape[1] % width == 0:
             return nr_image.area_mean(image, (image.shape[0] // height, image.shape[1] // width))
         return nr_image.bilinear(image, (height, width))
-    sys.path.insert(0, str(ROOT / "src" / "layer"))
     import nr_daemon
+
     return nr_daemon.resample(image, (height, width))
 
 
 def child(width, height, scale, frames, warmup, temporal):
     """One case in this process; prints one JSON line."""
     import nr_frame_native
+
     nf = nr_frame_native.NativeFrame()
     inner_w, inner_h = inner_size(width, height, scale)
     network_h, network_w = nr_frame_native.geometry(inner_h, inner_w)
@@ -96,8 +103,12 @@ def child(width, height, scale, frames, warmup, temporal):
         resampled = time.perf_counter()
         extra = {}
         if temporal and history is not None:
-            extra = dict(history=history, previous=previous, hold=HOLD,
-                         slope=float(np.float32(-255.0 * HOLD / HOLD_RAMP)))
+            extra = {
+                "history": history,
+                "previous": previous,
+                "hold": HOLD,
+                "slope": float(np.float32(-255.0 * HOLD / HOLD_RAMP)),
+            }
         output, head = nf.update(inner, want_head=True, **extra)
         done = time.perf_counter()
         if temporal:
@@ -105,20 +116,47 @@ def child(width, height, scale, frames, warmup, temporal):
         if i >= warmup:
             write, graph, read = nf.split
             update = done - resampled
-            rows.append(dict(total=done - started, resample=resampled - started,
-                             write=write, graph=graph, read=read,
-                             host=update - write - graph - read))
+            rows.append(
+                {
+                    "total": done - started,
+                    "resample": resampled - started,
+                    "write": write,
+                    "graph": graph,
+                    "read": read,
+                    "host": update - write - graph - read,
+                }
+            )
     digest = hashlib.sha256(np.ascontiguousarray(head).tobytes()).hexdigest()[:16]
-    print(json.dumps(dict(width=width, height=height, scale=scale, inner=[inner_w, inner_h],
-                          network=[network_w, network_h], device=nf.device,
-                          gemm=nf.gemm_path, head=digest, frames=rows)), flush=True)
+    print(
+        json.dumps(
+            {
+                "width": width,
+                "height": height,
+                "scale": scale,
+                "inner": [inner_w, inner_h],
+                "network": [network_w, network_h],
+                "device": nf.device,
+                "gemm": nf.gemm_path,
+                "head": digest,
+                "frames": rows,
+            }
+        ),
+        flush=True,
+    )
     nf.close()
 
 
 def run_case(width, height, scale, args, env):
-    command = [sys.executable, str(pathlib.Path(__file__).resolve()), "--child",
-               "%dx%d@%g" % (width, height, scale), "--frames", str(args.frames),
-               "--warmup", str(args.warmup)]
+    command = [
+        sys.executable,
+        str(pathlib.Path(__file__).resolve()),
+        "--child",
+        "%dx%d@%g" % (width, height, scale),
+        "--frames",
+        str(args.frames),
+        "--warmup",
+        str(args.warmup),
+    ]
     if not args.temporal:
         command.append("--still")
     frames, heads, last = [], set(), None
@@ -126,8 +164,10 @@ def run_case(width, height, scale, args, env):
         done = subprocess.run(command, env=env, capture_output=True, text=True)
         lines = [line for line in done.stdout.splitlines() if line.startswith("{")]
         if done.returncode or not lines:
-            raise SystemExit("case %dx%d@%g failed (%d):\n%s%s" % (
-                width, height, scale, done.returncode, done.stdout, done.stderr))
+            raise SystemExit(
+                "case %dx%d@%g failed (%d):\n%s%s"
+                % (width, height, scale, done.returncode, done.stdout, done.stderr)
+            )
         last = json.loads(lines[-1])
         frames += last["frames"]
         heads.add(last["head"])
@@ -145,8 +185,10 @@ def median(values):
 
 def summarise(result):
     rows = result["frames"]
-    column = {key: 1000 * median([r[key] for r in rows])
-              for key in ("total", "resample", "write", "graph", "read", "host")}
+    column = {
+        key: 1000 * median([r[key] for r in rows])
+        for key in ("total", "resample", "write", "graph", "read", "host")
+    }
     totals = [1000 * r["total"] for r in rows]
     return column, min(totals), max(totals)
 
@@ -158,19 +200,38 @@ def parse_case(case):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("cases", nargs="*", help="WxH@scale; live_rates' plan if none")
     parser.add_argument("--frames", type=int, default=9, help="timed frames per process")
     parser.add_argument("--warmup", type=int, default=3, help="frames to discard first")
-    parser.add_argument("--processes", type=int, default=1,
-                        help="processes per case; buffer placement varies between them")
-    parser.add_argument("--still", dest="temporal", action="store_false",
-                        help="no history: every frame stands alone")
-    parser.add_argument("--ab", action="append", default=[], metavar="VAR",
-                        help="run every case with VAR=0 and VAR=1 (repeatable)")
-    parser.add_argument("--env", action="append", default=[], metavar="VAR=VALUE",
-                        help="set for every case (repeatable)")
+    parser.add_argument(
+        "--processes",
+        type=int,
+        default=1,
+        help="processes per case; buffer placement varies between them",
+    )
+    parser.add_argument(
+        "--still",
+        dest="temporal",
+        action="store_false",
+        help="no history: every frame stands alone",
+    )
+    parser.add_argument(
+        "--ab",
+        action="append",
+        default=[],
+        metavar="VAR",
+        help="run every case with VAR=0 and VAR=1 (repeatable)",
+    )
+    parser.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        metavar="VAR=VALUE",
+        help="set for every case (repeatable)",
+    )
     parser.add_argument("--json", metavar="FILE", help="write every frame's timings here")
     parser.add_argument("--child", metavar="CASE", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -186,13 +247,28 @@ def main():
         base[name] = value
     variants = [("", base)]
     for name in args.ab:
-        variants = [(("%s %s=%s" % (label, name, value)).strip(), dict(env, **{name: value}))
-                    for label, env in variants for value in ("0", "1")]
+        variants = [
+            ((f"{label} {name}={value}").strip(), dict(env, **{name: value}))
+            for label, env in variants
+            for value in ("0", "1")
+        ]
 
     plan = [parse_case(case) for case in args.cases] or list(PLAN)
     header = "  %-11s %5s %-9s %-24s %7s %6s %11s %6s %6s %6s %6s %6s  %s" % (
-        "extent", "scale", "network", "variant", "ms", "fps", "min-max", "resmp", "write",
-        "graph", "read", "host", "head")
+        "extent",
+        "scale",
+        "network",
+        "variant",
+        "ms",
+        "fps",
+        "min-max",
+        "resmp",
+        "write",
+        "graph",
+        "read",
+        "host",
+        "head",
+    )
     printed = False
     results = []
     for width, height, scale in plan:
@@ -201,17 +277,36 @@ def main():
             result["variant"] = label
             results.append(result)
             if not printed:
-                print("  %s, %s, %s" % (result["device"], result["gemm"],
-                                        "temporal" if args.temporal else "still"))
+                print(
+                    "  {}, {}, {}".format(
+                        result["device"],
+                        result["gemm"],
+                        "temporal" if args.temporal else "still",
+                    )
+                )
                 print(header)
                 printed = True
             column, low, high = summarise(result)
-            print("  %-11s %5.2f %-9s %-24s %7.1f %6.1f %11s %6.1f %6.1f %6.1f %6.1f %6.1f  %s" % (
-                "%dx%d" % (width, height), scale, "%dx%d" % tuple(result["network"]),
-                label or "-", column["total"], 1000 / column["total"],
-                "%.0f-%.0f" % (low, high), column["resample"], column["write"],
-                column["graph"], column["read"], column["host"], result["head"]), flush=True)
-        if len(variants) > 1 and len({r["head"] for r in results[-len(variants):]}) > 1:
+            print(
+                "  %-11s %5.2f %-9s %-24s %7.1f %6.1f %11s %6.1f %6.1f %6.1f %6.1f %6.1f  %s"
+                % (
+                    "%dx%d" % (width, height),
+                    scale,
+                    "%dx%d" % tuple(result["network"]),
+                    label or "-",
+                    column["total"],
+                    1000 / column["total"],
+                    f"{low:.0f}-{high:.0f}",
+                    column["resample"],
+                    column["write"],
+                    column["graph"],
+                    column["read"],
+                    column["host"],
+                    result["head"],
+                ),
+                flush=True,
+            )
+        if len(variants) > 1 and len({r["head"] for r in results[-len(variants) :]}) > 1:
             print("  ^ the variants' heads differ: not the same computation")
     if args.json:
         pathlib.Path(args.json).write_text(json.dumps(results, indent=1))

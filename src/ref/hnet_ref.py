@@ -11,12 +11,10 @@ Two jobs:
 
 Nothing here is tuned for speed. It is the ground truth.
 """
-import sys
+
 from pathlib import Path
 
 import numpy as np
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from hnet_weights import parse
 
 
@@ -33,7 +31,7 @@ class HNet:
     def matrix(self, name, shape, offset=0):
         """A slice of a packed blob, viewed as a 2-D float16 matrix."""
         n = int(np.prod(shape))
-        return self.raw(name)[offset:offset + n].reshape(shape)
+        return self.raw(name)[offset : offset + n].reshape(shape)
 
 
 def linear_fp16_fp32(x, w):
@@ -44,8 +42,9 @@ def linear_fp16_fp32(x, w):
     the accumulator is FP32. Computing it as float32 matmul on float16 inputs
     reproduces that; it is *not* the same as computing in float16 throughout.
     """
-    assert x.dtype == np.float16 and w.dtype == np.float16
-    return (x.astype(np.float32) @ w.astype(np.float32))
+    assert x.dtype == np.float16
+    assert w.dtype == np.float16
+    return x.astype(np.float32) @ w.astype(np.float32)
 
 
 def _selftest():
@@ -54,7 +53,7 @@ def _selftest():
 
     print("== tensor ==")
     a = ref.raw(name)
-    print("   %s: %s elements, dtype=%s" % (name, format(a.size, ","), a.dtype))
+    print("   {}: {} elements, dtype={}".format(name, format(a.size, ","), a.dtype))
 
     print("\n== is the 512x512 reshape real structure, or an artefact? ==")
     M = ref.matrix(name, (512, 512))
@@ -64,26 +63,33 @@ def _selftest():
     S = rng.permutation(M.astype(np.float32).ravel()).reshape(512, 512)
     srow = np.linalg.norm(S, axis=1)
     scol = np.linalg.norm(S, axis=0)
-    cv = lambda v: v.std() / v.mean()
-    print("   as stored   : row-norm cv = %.4f   col-norm cv = %.4f" % (cv(rows), cv(cols)))
-    print("   shuffled    : row-norm cv = %.4f   col-norm cv = %.4f" % (cv(srow), cv(scol)))
-    print("   -> stored rows are %.0fx more variable than chance; the 2-D layout is real."
-          % (cv(rows) / cv(srow)))
+
+    def cv(v):
+        return v.std() / v.mean()
+
+    print(f"   as stored   : row-norm cv = {cv(rows):.4f}   col-norm cv = {cv(cols):.4f}")
+    print(f"   shuffled    : row-norm cv = {cv(srow):.4f}   col-norm cv = {cv(scol):.4f}")
+    print(
+        "   -> stored rows are %.0fx more variable than chance; the 2-D layout is real."
+        % (cv(rows) / cv(srow))
+    )
 
     print("\n== numeric contract: fp16 operands, fp32 accumulate ==")
     rng = np.random.default_rng(1)
     x = rng.standard_normal((64, 512)).astype(np.float16)
     y32 = linear_fp16_fp32(x, M)
     y64 = x.astype(np.float64) @ M.astype(np.float64)
-    y16 = (x @ M).astype(np.float64)          # fp16 accumulation, for contrast
+    y16 = (x @ M).astype(np.float64)  # fp16 accumulation, for contrast
     err32 = np.abs(y32.astype(np.float64) - y64).max()
     err16 = np.abs(y16 - y64).max()
     scale = np.abs(y64).max()
-    print("   output range          : +-%.4g" % scale)
-    print("   fp32 accumulate error : %.3e  (%.2e relative)" % (err32, err32 / scale))
-    print("   fp16 accumulate error : %.3e  (%.2e relative)" % (err16, err16 / scale))
-    print("   -> fp32 accumulation is %.0fx more accurate. Phase 4 must use config 1."
-          % (err16 / err32))
+    print(f"   output range          : +-{scale:.4g}")
+    print(f"   fp32 accumulate error : {err32:.3e}  ({err32 / scale:.2e} relative)")
+    print(f"   fp16 accumulate error : {err16:.3e}  ({err16 / scale:.2e} relative)")
+    print(
+        "   -> fp32 accumulation is %.0fx more accurate. Phase 4 must use config 1."
+        % (err16 / err32)
+    )
     return 0
 
 

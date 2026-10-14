@@ -23,6 +23,7 @@ Usage:
 The project root is located by walking up from this file, so the script works no
 matter where you invoke it from.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -75,6 +76,7 @@ def ensure_mlx(work: Path) -> Path:
 def count_tensors(path: Path) -> int:
     # Safetensors stores a JSON header of length 8 bytes at the very start.
     import json
+
     with path.open("rb") as handle:
         length = int.from_bytes(handle.read(8), "little")
         header = json.loads(handle.read(length))
@@ -88,20 +90,25 @@ def main() -> int:
     )
     parser.add_argument("dll", type=Path, help="path to YOUR copy of nvngx_dlssnr.dll")
     parser.add_argument(
-        "--work-dir", type=Path, default=ROOT / "work",
+        "--work-dir",
+        type=Path,
+        default=ROOT / "work",
         help="project work tree (default: <root>/work, git-ignored)",
     )
     parser.add_argument(
-        "--skip-extract", action="store_true",
+        "--skip-extract",
+        action="store_true",
         help="assume work/mlxw/dlssnr-packed.safetensors already exists; run only the weight split",
     )
     args = parser.parse_args()
 
     dll: Path = args.dll
     if not dll.is_file():
-        sys.exit(f"DLL not found: {dll}\n"
-                 "You must supply your own nvngx_dlssnr.dll (version 310.8.0.0). "
-                 "This project does not ship it.")
+        sys.exit(
+            f"DLL not found: {dll}\n"
+            "You must supply your own nvngx_dlssnr.dll (version 310.8.0.0). "
+            "This project does not ship it."
+        )
 
     work: Path = args.work_dir
     mlxw = work / "mlxw"
@@ -126,13 +133,15 @@ def main() -> int:
 
     try:
         n = count_tensors(logical)
-    except Exception as exc:  # noqa: BLE001 - report rather than crash
+    except Exception as exc:  # report rather than crash
         print(f"warning: could not read tensor count ({exc}); continuing.")
         n = -1
 
     if n != EXPECTED_TENSORS:
-        print(f"\nWARNING: expected {EXPECTED_TENSORS} tensors, found {n}. "
-              "The model will likely refuse to load. Re-extract from a clean DLL.")
+        print(
+            f"\nWARNING: expected {EXPECTED_TENSORS} tensors, found {n}. "
+            "The model will likely refuse to load. Re-extract from a clean DLL."
+        )
     else:
         print(f"\nOK: {logical} - {n} logical tensors. The daemon can now load it.")
 

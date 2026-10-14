@@ -20,29 +20,30 @@ theirs on 2026-09-27, is only below 129 pixels a side.
 Needs a clone of the repository (OPENDLSS_PORT, default work/opendlss-nr/ports/browser-webgpu), the
 model directory (OPENDLSS_MODEL, default work/opendlss-model), node and Chromium.
 """
+
 import argparse
 import json
 import os
 import pathlib
 import subprocess
-import sys
 import tempfile
 
+import image_io
+import nr_frame
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / "src" / "ref"), str(ROOT / "src" / "gpu"), str(ROOT / "src" / "layer")]
 
-import image_io        # noqa: E402
-import nr_frame        # noqa: E402
-
-PORT = pathlib.Path(os.environ.get("OPENDLSS_PORT", ROOT / "work" / "opendlss-nr" / "ports" / "browser-webgpu"))
+PORT = pathlib.Path(
+    os.environ.get("OPENDLSS_PORT", ROOT / "work" / "opendlss-nr" / "ports" / "browser-webgpu")
+)
 MODEL = pathlib.Path(os.environ.get("OPENDLSS_MODEL", ROOT / "work" / "opendlss-model"))
 RUNNER = pathlib.Path(__file__).with_name("opendlss_reference.mjs")
 
 
 def their_field(valid_width, valid_height):
     """`geometryFromValid` in the port's geometry.js: the padded field for a valid size."""
+
     def align_up(value, alignment):
         return -(-value // alignment) * alignment
 
@@ -68,7 +69,11 @@ def e4m3_table():
     codes = np.arange(256)
     sign = np.where(codes & 0x80, -1.0, 1.0)
     exponent, mantissa = (codes >> 3) & 15, codes & 7
-    value = np.where(exponent == 0, mantissa / 8 * 2.0 ** -6, (1 + mantissa / 8) * 2.0 ** (exponent - 7))
+    value = np.where(
+        exponent == 0,
+        mantissa / 8 * 2.0**-6,
+        (1 + mantissa / 8) * 2.0 ** (exponent - 7),
+    )
     value = (sign * value).astype(np.float32)
     value[[0x7F, 0xFF]] = np.nan
     return value
@@ -84,12 +89,27 @@ def reference_run(features, valid_width, valid_height, *, capture=False):
     with tempfile.TemporaryDirectory(prefix="opendlss-io-") as io:
         io = pathlib.Path(io)
         np.ascontiguousarray(features, dtype=np.float32).tofile(io / "features.bin")
-        done = subprocess.run(["node", str(RUNNER), str(PORT), str(MODEL), str(io),
-                               str(valid_width), str(valid_height)] + (["capture"] if capture else []),
-                              capture_output=True, text=True)
-        result = json.loads((io / "result.json").read_text()) if (io / "result.json").exists() else {}
-        if done.returncode != 0 or not result.get("ok"):
-            raise RuntimeError(f"the reference failed: {result.get('error') or done.stderr[-2000:]}")
+        done = subprocess.run(
+            [
+                "node",
+                str(RUNNER),
+                str(PORT),
+                str(MODEL),
+                str(io),
+                str(valid_width),
+                str(valid_height),
+            ]
+            + (["capture"] if capture else []),
+            capture_output=True,
+            text=True,
+        )
+        if done.returncode != 0:
+            raise RuntimeError(f"the reference runner failed: {done.stderr[-2000:]}")
+        result = (
+            json.loads((io / "result.json").read_text()) if (io / "result.json").exists() else {}
+        )
+        if not result.get("ok"):
+            raise RuntimeError(f"the reference failed: {result.get('error')}")
         head = np.fromfile(io / "head.bin", np.float32).reshape(height, width, 4)
         bounds = {}
         if capture:
@@ -101,8 +121,9 @@ def reference_run(features, valid_width, valid_height, *, capture=False):
                     values = np.frombuffer(raw, np.float16).astype(np.float32)
                 else:
                     raise ValueError(f"boundary {entry['name']} is {entry['format']}")
-                bounds[entry["name"]] = values[:entry["rows"] * entry["channels"]].reshape(
-                    entry["rows"], entry["channels"])
+                bounds[entry["name"]] = values[: entry["rows"] * entry["channels"]].reshape(
+                    entry["rows"], entry["channels"]
+                )
     return head, result, bounds
 
 
@@ -129,12 +150,16 @@ def main():
     geometry = nr_frame.network_geometry(valid_width, valid_height)
     ours_field = (geometry.network_width, geometry.network_height)
     if ours_field != their_field(valid_width, valid_height):
-        raise SystemExit(f"{args.size}: our field {ours_field} is not theirs "
-                         f"{their_field(valid_width, valid_height)}; the window grids would differ")
+        raise SystemExit(
+            f"{args.size}: our field {ours_field} is not theirs "
+            f"{their_field(valid_width, valid_height)}; the window grids would differ"
+        )
 
     import nr_daemon
-    colour = nr_daemon.resample(np.asarray(image_io.load(args.image), np.float32),
-                                (valid_height, valid_width))
+
+    colour = nr_daemon.resample(
+        np.asarray(image_io.load(args.image), np.float32), (valid_height, valid_width)
+    )
     features = nr_frame.build_features(colour, geometry=geometry, **nr_frame.PROFILES[args.profile])
 
     backend = nr_frame.ResidentBackend()
@@ -146,25 +171,34 @@ def main():
 
     crop = geometry.crop
     ours_valid, theirs_valid = crop(ours), crop(theirs)
-    print(f"{args.size} on a {ours_field[0]}x{ours_field[1]} field, {pathlib.Path(args.image).name}; "
-          f"reference on {result['adapter']}, {min(result['times']):.0f} ms a frame")
+    print(
+        f"{args.size} on a {ours_field[0]}x{ours_field[1]} field, {pathlib.Path(args.image).name}; "
+        f"reference on {result['adapter']}, {min(result['times']):.0f} ms a frame"
+    )
     for channel, name in enumerate(("red", "green", "blue", "gate logit")):
         a, b = ours_valid[..., channel].ravel(), theirs_valid[..., channel].ravel()
-        print(f"  head {name:10s} corr {np.corrcoef(a, b)[0, 1]:.4f}  mean |d| {np.abs(a - b).mean():.4f}  "
-              f"sd ours {a.std():.4f} theirs {b.std():.4f}")
+        print(
+            f"  head {name:10s} corr {np.corrcoef(a, b)[0, 1]:.4f}  mean |d| {np.abs(a - b).mean():.4f}  "
+            f"sd ours {a.std():.4f} theirs {b.std():.4f}"
+        )
     mine, reference = compose(colour, ours_valid), compose(colour, theirs_valid)
     levels = np.abs(mine - reference) * 255
-    print(f"  composed: mean {levels.mean():.2f} levels of 255 apart, 99th percentile "
-          f"{np.percentile(levels, 99):.1f}, max {levels.max():.1f}; the pass itself moves the frame "
-          f"{(np.abs(mine - colour) * 255).mean():.2f} (ours) and {(np.abs(reference - colour) * 255).mean():.2f} "
-          f"(theirs) levels")
+    print(
+        f"  composed: mean {levels.mean():.2f} levels of 255 apart, 99th percentile "
+        f"{np.percentile(levels, 99):.1f}, max {levels.max():.1f}; the pass itself moves the frame "
+        f"{(np.abs(mine - colour) * 255).mean():.2f} (ours) and {(np.abs(reference - colour) * 255).mean():.2f} "
+        f"(theirs) levels"
+    )
     if args.save:
         destination = pathlib.Path(args.save)
         destination.mkdir(parents=True, exist_ok=True)
         stem = f"{args.size}-{pathlib.Path(args.image).stem}"
         image_io.save(mine, destination / f"{stem}-ours.png")
         image_io.save(reference, destination / f"{stem}-theirs.png")
-        image_io.save(np.clip(np.abs(mine - reference) * 8, 0, 1), destination / f"{stem}-diff8x.png")
+        image_io.save(
+            np.clip(np.abs(mine - reference) * 8, 0, 1),
+            destination / f"{stem}-diff8x.png",
+        )
         np.save(destination / f"{stem}-heads.npy", np.stack([ours, theirs]))
         print(f"  -> {destination}/{stem}-{{ours,theirs,diff8x}}.png")
 

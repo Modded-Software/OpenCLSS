@@ -4,17 +4,13 @@
 Tells a nondeterministic pass (one mode differing from itself) from a mode that records
 differently (modes self-consistent, but not equal to each other).
 """
-import pathlib
-import sys
 
 import numpy as np
-
-HERE = pathlib.Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "ref"))
 
 
 def main():
     import nr_frame
+
     if not nr_frame.WEIGHTS.exists():
         print("frame determinism: skipped (no logical weights)")
         return

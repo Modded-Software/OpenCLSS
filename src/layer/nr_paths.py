@@ -7,6 +7,7 @@ say a fact written down twice drifts, so it is written down once.
 Nothing here imports anything but the standard library, so a tool can be a single file
 with a shebang and still share this.
 """
+
 import json
 import math
 import os
@@ -17,12 +18,14 @@ import sys
 import tempfile
 import time
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "src"))
-import nr_build  # noqa: E402
+import nr_build
 
-# /tmp is where these live on Linux and macOS; Windows has no such directory, so the
-# defaults land in the user's temp folder there instead. The env overrides above them are
-# how a launcher names the same endpoints for both the layer and the daemon.
+# A detached daemon must not hold the launching terminal's stdin. Bound to a name rather
+# than written inline, following the workspace's own convention for a deliberate,
+# documented redirect (`check_resolution_shapes._NULL_STDIN`); the child's stdout and
+# stderr go to LOG.
+_NULL_STDIN = subprocess.DEVNULL
+
 _TMP = pathlib.Path(tempfile.gettempdir()) if os.name == "nt" else pathlib.Path("/tmp")
 SETTINGS = pathlib.Path(os.environ.get("NR_SETTINGS", str(_TMP / "nr_settings.json")))
 TRIGGER = pathlib.Path(os.environ.get("NR_LAYER_TRIGGER", str(_TMP / "nr_trigger")))
@@ -52,8 +55,11 @@ def loader_environment(environment=None):
     Anything already set wins; elsewhere the environment comes back unchanged.
     """
     environment = dict(os.environ if environment is None else environment)
-    if sys.platform == "darwin" and ICD_MANIFEST.exists() \
-            and not (environment.get("VK_DRIVER_FILES") or environment.get("VK_ICD_FILENAMES")):
+    if (
+        sys.platform == "darwin"
+        and ICD_MANIFEST.exists()
+        and not (environment.get("VK_DRIVER_FILES") or environment.get("VK_ICD_FILENAMES"))
+    ):
         environment["VK_DRIVER_FILES"] = str(ICD_MANIFEST)
         environment["VK_ICD_FILENAMES"] = str(ICD_MANIFEST)
     return environment
@@ -130,9 +136,16 @@ def start_daemon(wait=10.0):
         wait = min(wait, 60.0)
     root = os.environ.get("NR_ROOT") or str(DAEMON.resolve().parents[2])
     environment = os.environ.copy()
-    removed = {"VK_LAYER_PATH", "VK_ADD_LAYER_PATH", "VK_IMPLICIT_LAYER_PATH",
-               "VK_ADD_IMPLICIT_LAYER_PATH", "VK_INSTANCE_LAYERS", "VK_LAYER_SETTINGS_PATH",
-               "ENABLE_NR_LAYER", "NR_DAEMON"}
+    removed = {
+        "VK_LAYER_PATH",
+        "VK_ADD_LAYER_PATH",
+        "VK_IMPLICIT_LAYER_PATH",
+        "VK_ADD_IMPLICIT_LAYER_PATH",
+        "VK_INSTANCE_LAYERS",
+        "VK_LAYER_SETTINGS_PATH",
+        "ENABLE_NR_LAYER",
+        "NR_DAEMON",
+    }
     for key in list(environment):
         if key.upper() in removed:
             environment.pop(key)
@@ -147,11 +160,24 @@ def start_daemon(wait=10.0):
             process = subprocess.Popen(
                 # the socket too, not just the settings: with `NR_LAYER_SOCKET` set, a
                 # daemon started on the default path is one nothing else is talking to
-                [interpreter, str(DAEMON), "--settings", str(SETTINGS),
-                 "--socket", str(SOCKET), "--root", root],
-                stdout=log, stderr=subprocess.STDOUT, stdin=open(os.devnull, "rb"),
-                start_new_session=True, cwd=str(DAEMON.parent), env=environment,
-                **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}))
+                [
+                    interpreter,
+                    str(DAEMON),
+                    "--settings",
+                    str(SETTINGS),
+                    "--socket",
+                    str(SOCKET),
+                    "--root",
+                    root,
+                ],
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                stdin=_NULL_STDIN,
+                start_new_session=True,
+                cwd=str(DAEMON.parent),
+                env=environment,
+                **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
+            )
     except OSError as error:
         return f"could not start it: {error}"
     # It refuses to start if one is already listening, so a second attempt is harmless.

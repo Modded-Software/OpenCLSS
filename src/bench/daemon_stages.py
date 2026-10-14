@@ -28,6 +28,7 @@ Each line is a median over the frames, with the least and the most beside it. Th
 The next frame is sent only once the daemon has finished the last one, log line included, so no
 stage overlaps another frame's.
 """
+
 import argparse
 import json
 import os
@@ -40,20 +41,37 @@ import tempfile
 import threading
 import time
 
+import live_rates
+import nr_daemon
+import nr_frame
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-for sub in ("src/bench", "src/layer", "src/ref", "src/gpu"):
-    sys.path.insert(0, str(ROOT / sub))
 
-import live_rates  # noqa: E402
-import nr_daemon   # noqa: E402
-import nr_frame    # noqa: E402
+FRAMES = []  # one record of stage times a request, appended when the daemon is done
+current = {}  # the request in progress
 
-FRAMES = []        # one record of stage times a request, appended when the daemon is done
-current = {}       # the request in progress
-
-ORDER = ("receive", "settings", "decode", "letterbox", "resample", "history_take", "features",
-         "gpu_in", "gpu_run", "gpu_out", "compose_encode", "compose", "encode", "send",
-         "post_send", "to_answer", "total", "round_trip", "daemon_rest", "rest")
+ORDER = (
+    "receive",
+    "settings",
+    "decode",
+    "letterbox",
+    "resample",
+    "history_take",
+    "features",
+    "gpu_in",
+    "gpu_run",
+    "gpu_out",
+    "compose_encode",
+    "compose",
+    "encode",
+    "send",
+    "post_send",
+    "to_answer",
+    "total",
+    "round_trip",
+    "daemon_rest",
+    "rest",
+)
 
 
 def timed(name, function):
@@ -63,6 +81,7 @@ def timed(name, function):
             return function(*args, **kwargs)
         finally:
             current[name] = current.get(name, 0.0) + time.perf_counter() - started
+
     return wrapper
 
 
@@ -88,17 +107,22 @@ class Connection:
 def instrument():
     """Wrap the stages. The daemon looks each of them up when it calls it, so this holds."""
     for module, name, label in (
-            (nr_daemon, "receive", "receive"), (nr_daemon, "decode", "decode"),
-            (nr_daemon, "resample", "resample"), (nr_daemon, "encode", "encode"),
-            (nr_frame, "build_features", "features"),
-            (nr_frame, "compose_encode", "compose_encode"), (nr_frame, "compose", "compose")):
+        (nr_daemon, "receive", "receive"),
+        (nr_daemon, "decode", "decode"),
+        (nr_daemon, "resample", "resample"),
+        (nr_daemon, "encode", "encode"),
+        (nr_frame, "build_features", "features"),
+        (nr_frame, "compose_encode", "compose_encode"),
+        (nr_frame, "compose", "compose"),
+    ):
         setattr(module, name, timed(label, getattr(module, name)))
     for cls, name, label in (
-            (nr_frame.ResidentBackend, "run_features", "graph_call"),
-            (nr_daemon.History, "take", "history_take"),
-            (nr_daemon.History, "keep", "history_keep"),
-            (nr_daemon.Letterbox, "region", "letterbox"),
-            (nr_daemon.Settings, "refresh", "settings")):
+        (nr_frame.ResidentBackend, "run_features", "graph_call"),
+        (nr_daemon.History, "take", "history_take"),
+        (nr_daemon.History, "keep", "history_keep"),
+        (nr_daemon.Letterbox, "region", "letterbox"),
+        (nr_daemon.Settings, "refresh", "settings"),
+    ):
         setattr(cls, name, timed(label, getattr(cls, name)))
 
     geometry = nr_frame.network_geometry
@@ -121,7 +145,8 @@ def instrument():
             current["to_answer"] = current.get("answered", ended) - started
             current["total"] = ended - started
             current["gpu_in"], current["gpu_run"], current["gpu_out"] = getattr(
-                backend, "split", (0.0, 0.0, 0.0))
+                backend, "split", (0.0, 0.0, 0.0)
+            )
             FRAMES.append(dict(current))
 
     nr_daemon.process_connection = process_connection
@@ -133,7 +158,7 @@ def connect_pipe(path):
     for _ in range(2000):
         try:
             return open(path, "r+b", buffering=0)
-        except OSError:                       # not created yet, or every instance busy
+        except OSError:  # not created yet, or every instance busy
             time.sleep(0.0005)
     raise RuntimeError(f"no pipe at {path}")
 
@@ -146,7 +171,7 @@ def round_trip(endpoint, data, want):
         with connect_pipe(endpoint) as pipe:
             view = memoryview(data)
             while view:
-                view = view[pipe.write(view):]
+                view = view[pipe.write(view) :]
             while got < want:
                 piece = pipe.read(want - got)
                 if not piece:
@@ -172,46 +197,55 @@ def drive(endpoint, ready, settings, plan, frames, warmup, out):
     for width, height, scale in plan:
         for kind in ("fresh", "held"):
             settings.write_text(json.dumps({"render_scale": scale}))
-            header = struct.pack("<4I", live_rates.MAGIC, width, height,
-                                 live_rates.FORMAT_B8G8R8A8)
+            header = struct.pack("<4I", live_rates.MAGIC, width, height, live_rates.FORMAT_B8G8R8A8)
             still = live_rates.frame(width, height, 0)
             rows = []
             for i in range(warmup + frames):
                 payload = live_rates.frame(width, height, i + 1) if kind == "fresh" else still
                 seen = len(FRAMES)
                 took = round_trip(endpoint, header + payload, 4 * width * height)
-                while len(FRAMES) == seen:                  # until the log line is out
+                while len(FRAMES) == seen:  # until the log line is out
                     time.sleep(0.0005)
                 record = dict(FRAMES[-1])
                 record["round_trip"] = took
                 record["post_send"] = record["total"] - record["to_answer"]
-                record["daemon_rest"] = (record["total"] - record.get("receive", 0.0)
-                                         - record["gpu_run"])
+                record["daemon_rest"] = (
+                    record["total"] - record.get("receive", 0.0) - record["gpu_run"]
+                )
                 record["rest"] = took - record["gpu_run"]
                 if i >= warmup:
                     rows.append(record)
-            lines.append(f"\n{width}x{height} at {scale:g}, {kind}, network "
-                         f"{rows[-1].get('field', '?')}: ms, median (least-most) of {len(rows)}")
+            lines.append(
+                f"\n{width}x{height} at {scale:g}, {kind}, network "
+                f"{rows[-1].get('field', '?')}: ms, median (least-most) of {len(rows)}"
+            )
             for key in ORDER:
                 values = [row.get(key, 0.0) for row in rows]
                 if max(values) == 0.0:
                     continue
-                lines.append(f"  {key:15} {1000 * statistics.median(values):7.2f}"
-                             f"   ({1000 * min(values):.2f}-{1000 * max(values):.2f})")
+                lines.append(
+                    f"  {key:15} {1000 * statistics.median(values):7.2f}"
+                    f"   ({1000 * min(values):.2f}-{1000 * max(values):.2f})"
+                )
     text = "\n".join(lines) + "\n"
     if out:
         out.write_text(text, encoding="utf-8")
     print(text, flush=True)
-    os._exit(0)                      # the daemon's accept loop has no other way out
+    os._exit(0)  # the daemon's accept loop has no other way out
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("cases", nargs="+", metavar="WxH@scale")
     parser.add_argument("--frames", type=int, default=15, help="timed frames a case and kind")
-    parser.add_argument("--warmup", type=int, default=4,
-                        help="frames left out first, while the extent's buffers are built")
+    parser.add_argument(
+        "--warmup",
+        type=int,
+        default=4,
+        help="frames left out first, while the extent's buffers are built",
+    )
     parser.add_argument("--out", type=pathlib.Path, help="also write the table here")
     args = parser.parse_args()
     plan = []
@@ -226,15 +260,29 @@ def main():
     settings.write_text(json.dumps({"render_scale": plan[0][2]}))
     if os.name == "nt":
         endpoint = rf"\\.\pipe\nr_daemon_stages_{os.getpid()}"
-        ready = lambda: len(FRAMES) > 0 or _pipe_ready(endpoint)  # noqa: E731
+
+        def ready():
+            return len(FRAMES) > 0 or _pipe_ready(endpoint)
     else:
         endpoint = str(room / "stages.sock")
-        ready = lambda: os.path.exists(endpoint)  # noqa: E731
-    threading.Thread(target=drive, daemon=True,
-                     args=(endpoint, ready, settings, plan, args.frames, args.warmup,
-                           args.out)).start()
-    sys.argv = [str(ROOT / "src" / "layer" / "nr_daemon.py"), "--socket", endpoint,
-                "--settings", str(settings), "--max-pixels", str(1920 * 1200)]
+
+        def ready():
+            return os.path.exists(endpoint)
+
+    threading.Thread(
+        target=drive,
+        daemon=True,
+        args=(endpoint, ready, settings, plan, args.frames, args.warmup, args.out),
+    ).start()
+    sys.argv = [
+        str(ROOT / "src" / "layer" / "nr_daemon.py"),
+        "--socket",
+        endpoint,
+        "--settings",
+        str(settings),
+        "--max-pixels",
+        str(1920 * 1200),
+    ]
     nr_daemon.main()
 
 

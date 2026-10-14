@@ -109,7 +109,9 @@ sudo make install-hooks
 ```
 
 Hooks are mandatory (pre-commit, commit-msg, pre-push); the check list is in
-`/opt/workspace-ci/README.md`. Tests that need weights skip without them.
+`/opt/workspace-ci/README.md`. Tests that need weights skip without them. The
+lint and type-check gates run ruff and mypy; the rules still switched off, and
+how to turn them back on, are in [docs/QUALITY-GATES.md](docs/QUALITY-GATES.md).
 
 ## Provenance and licences
 

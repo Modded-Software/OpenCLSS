@@ -15,6 +15,7 @@ connection - so the daemon's frame loop stays as it is.
 `CreateNamedPipe` is reached through `ctypes` on kernel32: the machine has no
 `pywin32`, and the standard library is enough (measured in section A.7.9).
 """
+
 import ctypes
 import errno
 import time
@@ -28,7 +29,7 @@ PIPE_READMODE_BYTE = 0x00000000
 PIPE_WAIT = 0x00000000
 
 ERROR_PIPE_CONNECTED = 535
-ERROR_PIPE_BUSY = 231        # every instance is in use; retry, it is not a failure
+ERROR_PIPE_BUSY = 231  # every instance is in use; retry, it is not a failure
 ERROR_BROKEN_PIPE = 109
 ERROR_NO_DATA = 232
 
@@ -36,15 +37,32 @@ INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
 
 _k32.CreateNamedPipeW.restype = wintypes.HANDLE
 _k32.CreateNamedPipeW.argtypes = [
-    wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD,
-    wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p]
+    wintypes.LPCWSTR,
+    wintypes.DWORD,
+    wintypes.DWORD,
+    wintypes.DWORD,
+    wintypes.DWORD,
+    wintypes.DWORD,
+    wintypes.DWORD,
+    ctypes.c_void_p,
+]
 _k32.ConnectNamedPipe.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
 _k32.ConnectNamedPipe.restype = wintypes.BOOL
-_k32.ReadFile.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
-                          ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
+_k32.ReadFile.argtypes = [
+    wintypes.HANDLE,
+    ctypes.c_void_p,
+    wintypes.DWORD,
+    ctypes.POINTER(wintypes.DWORD),
+    ctypes.c_void_p,
+]
 _k32.ReadFile.restype = wintypes.BOOL
-_k32.WriteFile.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
-                           ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
+_k32.WriteFile.argtypes = [
+    wintypes.HANDLE,
+    ctypes.c_void_p,
+    wintypes.DWORD,
+    ctypes.POINTER(wintypes.DWORD),
+    ctypes.c_void_p,
+]
 _k32.WriteFile.restype = wintypes.BOOL
 _k32.CloseHandle.argtypes = [wintypes.HANDLE]
 _k32.CloseHandle.restype = wintypes.BOOL
@@ -66,7 +84,7 @@ class NamedPipeConnection:
     def recv(self, count):
         """Read up to `count` bytes; b'' when the peer closed cleanly."""
         buf = bytearray(count)
-        return bytes(buf[:self.recv_into(buf, count)])
+        return bytes(buf[: self.recv_into(buf, count)])
 
     def recv_into(self, buffer, count=0):
         """Read up to `count` bytes (all `buffer` holds when 0) straight into `buffer`, as a
@@ -115,8 +133,13 @@ class NamedPipeConnection:
         sent = 0
         while sent < total:
             written = wintypes.DWORD(0)
-            ok = _k32.WriteFile(self._handle, ctypes.c_void_p(base + sent), total - sent,
-                                ctypes.byref(written), None)
+            ok = _k32.WriteFile(
+                self._handle,
+                ctypes.c_void_p(base + sent),
+                total - sent,
+                ctypes.byref(written),
+                None,
+            )
             if not ok:
                 err = ctypes.get_last_error()
                 if err == ERROR_BROKEN_PIPE:
@@ -163,9 +186,15 @@ class NamedPipeServer:
         """
         for attempt in range(attempts):
             handle = _k32.CreateNamedPipeW(
-                self.path, PIPE_ACCESS_DUPLEX,
+                self.path,
+                PIPE_ACCESS_DUPLEX,
                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                self.backlog, self.buffer_size, self.buffer_size, 0, None)
+                self.backlog,
+                self.buffer_size,
+                self.buffer_size,
+                0,
+                None,
+            )
             value = int(handle)
             if value != INVALID_HANDLE_VALUE:
                 return value

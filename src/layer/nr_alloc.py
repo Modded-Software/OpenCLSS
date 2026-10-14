@@ -12,19 +12,21 @@ and gives back whatever a whole frame did not take again.
 `NR_KEEP_BLOCKS=0` leaves NumPy's allocator alone. Linux does not build the library: there
 every stage of the daemon's frame is under 2.2 ms (HANDOFF, 2026-10-02).
 """
+
 import ctypes
 import os
 import pathlib
 
-try:
-    from numpy._core import _multiarray_umath as _umath, multiarray as _multiarray
-except ImportError:                       # NumPy 1.x
-    from numpy.core import _multiarray_umath as _umath, multiarray as _multiarray
+from numpy._core import _multiarray_umath as _umath
+from numpy._core import multiarray as _multiarray
 
 NAME = "nr_keep_blocks"
 LIBRARY = pathlib.Path(__file__).resolve().parents[2] / "work" / "libnr_alloc.dll"
-_SET_HANDLER, _GET_HANDLER = 304, 305     # PyDataMem_SetHandler and _GetHandler in NumPy's C API
-_CAPSULE_NAME = ctypes.create_string_buffer(b"mem_handler")   # a capsule keeps its name's pointer
+_SET_HANDLER, _GET_HANDLER = (
+    304,
+    305,
+)  # PyDataMem_SetHandler and _GetHandler in NumPy's C API
+_CAPSULE_NAME = ctypes.create_string_buffer(b"mem_handler")  # a capsule keeps its name's pointer
 _state = {}
 
 
@@ -38,7 +40,11 @@ def _library():
             lib.nr_alloc_handler.restype = ctypes.c_void_p
             lib.nr_alloc_handler.argtypes = (ctypes.c_void_p,)
             lib.nr_alloc_frame.restype = lib.nr_alloc_release.restype = ctypes.c_size_t
-            lib.nr_alloc_configure.argtypes = (ctypes.c_size_t, ctypes.c_size_t, ctypes.c_int)
+            lib.nr_alloc_configure.argtypes = (
+                ctypes.c_size_t,
+                ctypes.c_size_t,
+                ctypes.c_int,
+            )
             lib.nr_alloc_counts.argtypes = (ctypes.POINTER(ctypes.c_longlong),)
         _state["lib"] = lib
     return _state["lib"]
@@ -47,7 +53,10 @@ def _library():
 def _api(index, restype, *argtypes):
     """A function from NumPy's C API table, which the extension module exports as a capsule."""
     pointer = ctypes.pythonapi.PyCapsule_GetPointer
-    pointer.restype, pointer.argtypes = ctypes.c_void_p, (ctypes.py_object, ctypes.c_char_p)
+    pointer.restype, pointer.argtypes = (
+        ctypes.c_void_p,
+        (ctypes.py_object, ctypes.c_char_p),
+    )
     table = ctypes.cast(pointer(_umath._ARRAY_API, None), ctypes.POINTER(ctypes.c_void_p))
     return ctypes.PYFUNCTYPE(restype, *argtypes)(table[index])
 
@@ -64,14 +73,19 @@ def install():
         return True
     current = _api(_GET_HANDLER, ctypes.py_object)()
     pointer = ctypes.pythonapi.PyCapsule_GetPointer
-    pointer.restype, pointer.argtypes = ctypes.c_void_p, (ctypes.py_object, ctypes.c_char_p)
+    pointer.restype, pointer.argtypes = (
+        ctypes.c_void_p,
+        (ctypes.py_object, ctypes.c_char_p),
+    )
     handler = lib.nr_alloc_handler(pointer(current, _CAPSULE_NAME.value))
     if not handler:
         return False
     if "capsule" not in _state:
         new = ctypes.pythonapi.PyCapsule_New
-        new.restype, new.argtypes = ctypes.py_object, (ctypes.c_void_p, ctypes.c_void_p,
-                                                       ctypes.c_void_p)
+        new.restype, new.argtypes = (
+            ctypes.py_object,
+            (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p),
+        )
         _state["capsule"] = new(handler, ctypes.addressof(_CAPSULE_NAME), None)
     _state.setdefault("previous", current)
     _api(_SET_HANDLER, ctypes.py_object, ctypes.py_object)(_state["capsule"])
@@ -107,4 +121,10 @@ def counts():
     lib = _library()
     if lib is not None:
         lib.nr_alloc_counts(values)
-    return dict(zip(("hits", "misses", "returned", "kept_bytes", "frame_most", "slots"), values))
+    return dict(
+        zip(
+            ("hits", "misses", "returned", "kept_bytes", "frame_most", "slots"),
+            values,
+            strict=False,
+        )
+    )

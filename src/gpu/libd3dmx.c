@@ -2,7 +2,7 @@
  * libd3dmx - libxmx on Direct3D 12: the same entry points, the same contract, driving
  * Windows' own graphics API instead of Vulkan.
  *
- * Every `xmx_*` symbol in `xmx.h` is here, so `nr_frame.c`, `xmx.py` and `xmxres.py` bind
+ * Every `xmx_*` symbol in `xmx.h` is here, so `nr_frame.c`, `xmx.py` and `xmxrt` bind
  * this library exactly as they bind libxmx (`NR_GPU_BACKEND=d3d12` makes them). Shader
  * names stay the SPIR-V names: `xmx_init("gemm_coopmat.spv")` runs the DXIL kernel this
  * library resolves that name to, from the table compiled into this binary

@@ -9,6 +9,7 @@ value needs: what the knob does, what the ends of its range do and where to star
 are general - no scene or game a reader cannot see. The measurements behind them live in
 `notes/`, where they can be checked.
 """
+
 import collections
 
 Knob = collections.namedtuple("Knob", "name label kind low high step default summary detail")
@@ -17,7 +18,13 @@ PROFILES = ("standard", "natural", "cinematic", "neutral")
 
 KNOBS = (
     Knob(
-        "render_scale", "render scale", "number", 0.05, 1.0, 0.05, 1.0,
+        "render_scale",
+        "render scale",
+        "number",
+        0.05,
+        1.0,
+        0.05,
+        1.0,
         "the fraction of each side the network runs on",
         "The only knob that changes the frame rate. The network draws its detail on a "
         "frame this much smaller; the detail is then scaled up and laid over the game's "
@@ -33,7 +40,13 @@ KNOBS = (
         "of network frame, plus 10-20 ms that grows with the game's own resolution.",
     ),
     Knob(
-        "min_extent", "min extent", "number", 128.0, 320.0, 64.0, 320.0,
+        "min_extent",
+        "min extent",
+        "number",
+        128.0,
+        320.0,
+        64.0,
+        320.0,
         "the smallest side the network's frame is padded to",
         "The network's frame is padded, by mirroring the picture, to at least this many "
         "pixels on a side. 320 is what NVIDIA's own driver does; the network itself runs "
@@ -44,7 +57,13 @@ KNOBS = (
         "in a game. It changes nothing once the scaled frame is larger than this anyway.",
     ),
     Knob(
-        "profile", "profile", "choice", None, None, None, "standard",
+        "profile",
+        "profile",
+        "choice",
+        None,
+        None,
+        None,
+        "standard",
         "which way to trade skin texture against highlights, and its colour grade",
         "The style the network is asked for, and the colour grade that comes with it. The "
         "profiles are a trade, not a quality ladder: what one adds to skin and surface "
@@ -57,7 +76,13 @@ KNOBS = (
         "the network draws; the knobs below act after it.",
     ),
     Knob(
-        "intensity", "intensity", "number", 0.0, 2.0, 0.05, 1.0,
+        "intensity",
+        "intensity",
+        "number",
+        0.0,
+        2.0,
+        0.05,
+        1.0,
         "how far to go towards the model's picture, or past it",
         "Blends the model's picture with the game's own. 1 is the model's picture, 0 is the "
         "game's frame untouched, and values between are part of the way. Above 1 the "
@@ -65,7 +90,13 @@ KNOBS = (
         "overdone. Free to change: nothing is re-run.",
     ),
     Knob(
-        "detail_strength", "detail strength", "number", 0.0, 2.0, 0.05, 1.0,
+        "detail_strength",
+        "detail strength",
+        "number",
+        0.0,
+        2.0,
+        0.05,
+        1.0,
         "how strongly to apply the fine detail the pass adds",
         "The change the pass makes is split into fine detail - pores, hair, grain - and "
         "broad tone. This scales the fine part: 0 keeps only the tonal change, above 1 "
@@ -73,7 +104,13 @@ KNOBS = (
         "blur over the whole frame.",
     ),
     Knob(
-        "colour_strength", "colour strength", "number", 0.0, 2.0, 0.05, 1.0,
+        "colour_strength",
+        "colour strength",
+        "number",
+        0.0,
+        2.0,
+        0.05,
+        1.0,
         "how strongly to apply the pass's change of tone and colour",
         "The broad half of the same split: how much of the pass's change in tone and "
         "colour is applied. It does not add colour back. The pass tends to calm bright, "
@@ -82,7 +119,13 @@ KNOBS = (
         "on top.",
     ),
     Knob(
-        "temporal", "temporal", "number", 0.0, 1.0, 0.05, 1.0,
+        "temporal",
+        "temporal",
+        "number",
+        0.0,
+        1.0,
+        0.05,
+        1.0,
         "how much of the previous frame to carry over",
         "Each frame, the previous result is fed back to the network, which decides per "
         "pixel how much of it to keep; that is what keeps the picture from shimmering. "
@@ -91,7 +134,13 @@ KNOBS = (
         "per cent of the frame time.",
     ),
     Knob(
-        "hold", "hold", "number", 0.0, 1.0, 0.05, 1.0,
+        "hold",
+        "hold",
+        "number",
+        0.0,
+        1.0,
+        0.05,
+        1.0,
         "how firmly to keep areas the game did not change",
         "Where the game hands back exactly the same pixel as last frame, the previous "
         "result is still right for it, so it is kept at least this firmly. This is what "
@@ -100,7 +149,13 @@ KNOBS = (
         "changes a pixel lets go of it.",
     ),
     Knob(
-        "release", "release", "number", 0.0, 64.0, 1.0, 24.0,
+        "release",
+        "release",
+        "number",
+        0.0,
+        64.0,
+        1.0,
+        24.0,
         "change, in levels of 255, that drops the previous frame where something moved",
         "The other side of `hold`. Where the game's own pixel changed by this many levels "
         "of 255 or more, something moved there, and the previous result is dropped for "
@@ -110,7 +165,13 @@ KNOBS = (
         "starts to shimmer over moving things, 0 turns it off and trails come back.",
     ),
     Knob(
-        "cut_limit", "cut limit", "number", 0.0, 1.0, 0.01, 0.15,
+        "cut_limit",
+        "cut limit",
+        "number",
+        0.0,
+        1.0,
+        0.01,
+        0.15,
         "how big a change between frames counts as a new scene",
         "The average change between two frames above which the scene is taken to have cut "
         "- a camera cut, a menu, a replay - and the previous frame is dropped entirely "
@@ -140,10 +201,12 @@ RATES = (
 )
 RATES_MEASURED = "2026-09-27"
 # What a reader of the table needs and the numbers cannot say. Empty when there is nothing.
-RATES_NOTE = ("Medians of six runs with swap empty; a row's runs spread up to 15 %. On "
-              "2026-09-23, with 5.5 GiB in zram and the kernel's memory-pressure figures "
-              "rising, 1920x1080 ran anywhere from 322 to 463 ms: if that row is much slower "
-              "for you, look at swap before anything else.")
+RATES_NOTE = (
+    "Medians of six runs with swap empty; a row's runs spread up to 15 %. On "
+    "2026-09-23, with 5.5 GiB in zram and the kernel's memory-pressure figures "
+    "rising, 1920x1080 ran anywhere from 322 to 463 ms: if that row is much slower "
+    "for you, look at swap before anything else."
+)
 
 
 def clamp(knob, value):

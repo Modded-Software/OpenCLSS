@@ -16,18 +16,33 @@ Geometry is derived from the kernel configs: Attention1dConfig gives the bottlen
 128-token sequence, and Conv2d1x1Config<1024,1024,16,8,...> makes that a 16x8 grid.
 Doubling upward through the four encoder stages puts the input at 512x256.
 """
+
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from hnet_model import Model
-from hnet_ops import softmax, l2_normalize, cos_skip, HEAD_DIM, TOKENS, GQA_RATIO, window_partition, window_reverse
+from hnet_ops import (
+    GQA_RATIO,
+    HEAD_DIM,
+    TOKENS,
+    cos_skip,
+    l2_normalize,
+    softmax,
+    window_partition,
+    window_reverse,
+)
 
 # stage width -> (H, W) of the feature map
-GEOMETRY = {32: (512, 256), 64: (256, 128), 128: (128, 64), 256: (64, 32), 512: (32, 16), 1024: (16, 8)}
+GEOMETRY = {
+    32: (512, 256),
+    64: (256, 128),
+    128: (128, 64),
+    256: (64, 32),
+    512: (32, 16),
+    1024: (16, 8),
+}
 
 
 def attend(blk, x, mm):
@@ -37,14 +52,16 @@ def attend(blk, x, mm):
     kv = h // GQA_RATIO
     if "wq" not in blk.t or kv < 1:
         return None
-    win = window_partition(x.astype(np.float16))              # (nWin, 64, C)
+    win = window_partition(x.astype(np.float16))  # (nWin, 64, C)
     n = win.shape[0]
     flat = win.reshape(-1, C)
     q = mm(flat, blk.t["wq"]).reshape(n, TOKENS, h, HEAD_DIM).transpose(0, 2, 1, 3)
     k = mm(flat, blk.t["wk"]).reshape(n, TOKENS, kv, HEAD_DIM).transpose(0, 2, 1, 3)
     v = mm(flat, blk.t["wv"]).reshape(n, TOKENS, kv, HEAD_DIM).transpose(0, 2, 1, 3)
-    q = l2_normalize(q); k = l2_normalize(k)
-    k = np.repeat(k, GQA_RATIO, axis=1); v = np.repeat(v, GQA_RATIO, axis=1)
+    q = l2_normalize(q)
+    k = l2_normalize(k)
+    k = np.repeat(k, GQA_RATIO, axis=1)
+    v = np.repeat(v, GQA_RATIO, axis=1)
     logits = q @ k.transpose(0, 1, 3, 2)
     if "attn_scale" in blk.t:
         logits = logits * blk.t["attn_scale"].astype(np.float32).reshape(1, -1, 1, 1)
@@ -78,8 +95,8 @@ def refit_channels(x, C):
 def main():
     use_gpu = "--gpu" in sys.argv
     if use_gpu:
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "gpu"))
         from xmx import gemm
+
         calls = [0]
 
         def mm(A, B):
@@ -91,11 +108,12 @@ def main():
         def mm(A, B):
             calls[0] += 1
             return A.astype(np.float32) @ B.astype(np.float32)
+
     m = Model(str(Path(__file__).resolve().parents[2] / "work" / "weights_ht.bin"))
     rng = np.random.default_rng(0)
     x = (rng.standard_normal((512, 256, 32)) * 0.5).astype(np.float32)
     print("=== forward pass through all %d blocks ===\n" % len(m.blocks))
-    print("  input %s" % (x.shape,))
+    print(f"  input {x.shape}")
     t0 = time.time()
     attended = passed = 0
     last_kind = None
@@ -118,15 +136,18 @@ def main():
             print("  block%-3d %-18s C=%-5d map %s" % (blk.index, blk.kind, C, x.shape[:2]))
             last_kind = blk.kind
     dt = time.time() - t0
-    print("\n  output %s   finite=%s   mean=%+.4g   sd=%.4g"
-          % (x.shape, np.isfinite(x).all(), x.mean(), x.std()))
+    print(
+        f"\n  output {x.shape}   finite={np.isfinite(x).all()}   mean={x.mean():+.4g}   sd={x.std():.4g}"
+    )
     print("  blocks with attention applied: %d    passed through: %d" % (attended, passed))
-    print("  matmuls: %d   wall time: %.1f s   (%s)"
-          % (calls[0], dt, "XMX" if use_gpu else "CPU numpy"))
+    print(
+        "  matmuls: %d   wall time: %.1f s   (%s)"
+        % (calls[0], dt, "XMX" if use_gpu else "CPU numpy")
+    )
     if "--save" in sys.argv:
         out = Path(sys.argv[sys.argv.index("--save") + 1])
         out.write_bytes(np.ascontiguousarray(x, dtype="<f4").tobytes())
-        print("  saved %s" % out)
+        print(f"  saved {out}")
     return 0 if np.isfinite(x).all() else 1
 
 

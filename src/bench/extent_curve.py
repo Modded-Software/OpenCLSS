@@ -5,26 +5,49 @@ Extents are multiples of 64, which is what `NetworkGeometry.vendor_aligned` prod
 Each is the best of five consecutive frames after a warm-up, so the GPU is at its
 1950 MHz ceiling throughout.
 """
-import pathlib, sys, time
-import numpy as np
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src" / "gpu")); sys.path.insert(0, str(ROOT / "src" / "ref"))
-import xmxres, nr_model, nr_frame_resident as F
 
-model = nr_model.NeuralRenderingModel.from_safetensors(ROOT / "work" / "mlxw" / "dlssnr-logical.safetensors")
-rt = xmxres.Runtime()
+import pathlib
+import time
+
+import numpy as np
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+import nr_frame_resident as F
+import nr_model
+from xmxrt.recorder import Recorder
+
+model = nr_model.NeuralRenderingModel.from_safetensors(
+    ROOT / "work" / "mlxw" / "dlssnr-logical.safetensors"
+)
+rt = Recorder()
 rng = np.random.default_rng(11)
 
-EXTENTS = [(256, 448), (320, 512), (384, 640), (384, 704), (448, 768), (512, 896),
-           (576, 1024), (640, 1152), (768, 1280)]
+EXTENTS = [
+    (256, 448),
+    (320, 512),
+    (384, 640),
+    (384, 704),
+    (448, 768),
+    (512, 896),
+    (576, 1024),
+    (640, 1152),
+    (768, 1280),
+]
 print("  %-16s %10s %9s %9s %12s" % ("network extent", "pixels", "ms", "fps", "ms/Mpixel"))
 base = None
 for h, w in EXTENTS:
     frame = F.ResidentFrame(rt, model.weights, h, w)
     features = (rng.standard_normal((h, w, 16)) * 0.3).astype(np.float32)
     frame.run(features)
-    best = min((lambda t=time.perf_counter(): (frame.run(features), time.perf_counter() - t)[1])()
-               for _ in range(5))
+    best = min(
+        (
+            lambda t=time.perf_counter(): (
+                frame.run(features),
+                time.perf_counter() - t,
+            )[1]
+        )()
+        for _ in range(5)
+    )
     ms = 1000 * best
     px = h * w
     if base is None:

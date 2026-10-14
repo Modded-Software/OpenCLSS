@@ -5,30 +5,28 @@ The wrapper applies the release environment in Steam's child process. Steam's
 existing process environment is deliberately not used to enable the NR layer.
 Only LaunchOptions is edited; Steam is asked to exit normally before an edit.
 """
+
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
+import secrets
 import stat
 import subprocess
 import sys
 import tempfile
 import time
-import secrets
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+
+from wizard import config, deps, manage, process, state
 
 
 class LaunchError(RuntimeError):
     pass
-
-
-def _core():
-    import windows_wizard_core
-    return windows_wizard_core
 
 
 def _emit(emit, message):
@@ -66,8 +64,9 @@ def _atomic_write(path, expected, data):
         raise LaunchError(f"File changed concurrently; left untouched: {path}")
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name + ".nr-",
-                                         suffix=".tmp", delete=False) as stream:
+        with tempfile.NamedTemporaryFile(
+            dir=path.parent, prefix=path.name + ".nr-", suffix=".tmp", delete=False
+        ) as stream:
             temporary = Path(stream.name)
             stream.write(data)
             stream.flush()
@@ -266,8 +265,16 @@ def _options(data, app_id):
 
 
 def _vdf_quote(value):
-    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"').replace(
-        "\r", "\\r").replace("\n", "\\n").replace("\t", "\\t") + '"'
+    return (
+        '"'
+        + str(value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+        .replace("\t", "\\t")
+        + '"'
+    )
 
 
 def _edit_options(data, app_id, value):
@@ -281,10 +288,12 @@ def _edit_options(data, app_id, value):
     if app is None:
         if value is None:
             return data
-        insert = (f'{newline}\t\t\t\t\t{_vdf_quote(app_id)}{newline}'
-                  f'\t\t\t\t\t{{{newline}\t\t\t\t\t\t"LaunchOptions"\t\t{_vdf_quote(value)}'
-                  f'{newline}\t\t\t\t\t}}{newline}')
-        text = text[:apps.close] + insert + text[apps.close:]
+        insert = (
+            f"{newline}\t\t\t\t\t{_vdf_quote(app_id)}{newline}"
+            f'\t\t\t\t\t{{{newline}\t\t\t\t\t\t"LaunchOptions"\t\t{_vdf_quote(value)}'
+            f"{newline}\t\t\t\t\t}}{newline}"
+        )
+        text = text[: apps.close] + insert + text[apps.close :]
     else:
         if not isinstance(app.value, list):
             raise LaunchError("Steam application entry is not a VDF block.")
@@ -293,12 +302,12 @@ def _edit_options(data, app_id, value):
             if not isinstance(option.value, str):
                 raise LaunchError("Steam LaunchOptions is not a string.")
             if value is None:
-                text = text[:option.start] + text[option.end:]
+                text = text[: option.start] + text[option.end :]
             else:
-                text = text[:option.value_start] + _vdf_quote(value) + text[option.end:]
+                text = text[: option.value_start] + _vdf_quote(value) + text[option.end :]
         elif value is not None:
             insert = f'{newline}\t\t\t\t\t\t"LaunchOptions"\t\t{_vdf_quote(value)}{newline}'
-            text = text[:app.close] + insert + text[app.close:]
+            text = text[: app.close] + insert + text[app.close :]
     result = bom + text.encode("utf-8")
     if _options(result, app_id) != value:
         raise LaunchError("Steam VDF edit did not round-trip correctly.")
@@ -325,9 +334,14 @@ def detect_steam_app_id(game_exe):
             state = _branch(_vdf(manifest.read_text(encoding="utf-8-sig")), ("AppState",))
             app = _find(state.value, "appid") if state else None
             directory = _find(state.value, "installdir") if state else None
-            if (app and directory and isinstance(app.value, str) and app.value.isdigit()
-                    and isinstance(directory.value, str)
-                    and _key(steamapps / "common" / directory.value) == _key(install)):
+            if (
+                app
+                and directory
+                and isinstance(app.value, str)
+                and app.value.isdigit()
+                and isinstance(directory.value, str)
+                and _key(steamapps / "common" / directory.value) == _key(install)
+            ):
                 matches.append(app.value)
         except (OSError, UnicodeError, LaunchError) as error:
             sys.stderr.write(f"windows_launch: skipping manifest: {error}\n")
@@ -339,6 +353,7 @@ def _registry(name, subkey=r"Software\Valve\Steam"):
     if os.name != "nt":
         return None
     import winreg
+
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey) as key:
             return winreg.QueryValueEx(key, name)[0]
@@ -356,7 +371,7 @@ def _steam_exe(given=None):
     if registered:
         candidates.append(Path(registered) / "steam.exe")
     if os.environ.get("ProgramFiles(x86)"):
-        candidates.append(Path(os.environ["ProgramFiles(x86)"]) / "Steam" / "steam.exe")
+        candidates.append(Path(os.environ["PROGRAMFILES(X86)"]) / "Steam" / "steam.exe")
     for candidate in candidates:
         if candidate.is_file():
             return candidate.resolve()
@@ -380,16 +395,29 @@ def _localconfig(steam_exe):
 def _processes(timeout=15):
     if os.name != "nt":
         raise LaunchError("Windows process inspection is required for safe game/Steam launch.")
-    powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
-    script = ("[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); "
-              "$ErrorActionPreference='Stop'; "
-              "@(Get-CimInstance Win32_Process | Select-Object ProcessId,Name,ExecutablePath) "
-              "| ConvertTo-Json -Compress")
-    result = subprocess.run([str(powershell), "-NoProfile", "-NonInteractive", "-Command", script],
-                            capture_output=True, text=True, encoding="utf-8", errors="replace",
-                            timeout=timeout, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    powershell = (
+        Path(os.environ.get("SystemRoot", r"C:\Windows"))
+        / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    )
+    script = (
+        "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); "
+        "$ErrorActionPreference='Stop'; "
+        "@(Get-CimInstance Win32_Process | Select-Object ProcessId,Name,ExecutablePath) "
+        "| ConvertTo-Json -Compress"
+    )
+    result = subprocess.run(
+        [str(powershell), "-NoProfile", "-NonInteractive", "-Command", script],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
     if result.returncode:
-        raise LaunchError("Cannot inspect active Windows processes safely: " + result.stderr.strip())
+        raise LaunchError(
+            "Cannot inspect active Windows processes safely: " + result.stderr.strip()
+        )
     text = result.stdout.strip()
     parsed = json.loads(text) if text else []
     return parsed if isinstance(parsed, list) else [parsed]
@@ -422,9 +450,11 @@ def active_game_processes(profile):
             continue
         executable = process.get("ExecutablePath")
         name = str(process.get("Name", "")).casefold()
-        if ((executable and any(_inside(executable, directory) for directory in installations))
-                or (not executable and name in names)
-                or (process.get("ProcessId") == previous_pid and name in names)):
+        if (
+            (executable and any(_inside(executable, directory) for directory in installations))
+            or (not executable and name in names)
+            or (process.get("ProcessId") == previous_pid and name in names)
+        ):
             running.append(process)
     return running
 
@@ -436,18 +466,24 @@ def _steam_games(steam_exe, profile):
     folders = Path(steam_exe).parent / "steamapps/libraryfolders.vdf"
     if folders.is_file():
         try:
+
             def walk(nodes):
                 for node in nodes:
                     if isinstance(node.value, list):
                         yield from walk(node.value)
                     elif node.key.casefold() == "path":
                         yield Path(node.value) / "steamapps/common"
+
             libraries.update(walk(_vdf(folders.read_text(encoding="utf-8-sig"))))
         except (OSError, UnicodeError, LaunchError) as error:
             raise LaunchError(f"Cannot inspect Steam libraries safely: {error}") from error
     processes = _processes()
-    games = [process for process in processes if process.get("ExecutablePath")
-             and any(_inside(process["ExecutablePath"], folder) for folder in libraries)]
+    games = [
+        process
+        for process in processes
+        if process.get("ExecutablePath")
+        and any(_inside(process["ExecutablePath"], folder) for folder in libraries)
+    ]
     running = _registry("RunningAppID")
     if running and str(running) != "0":
         games.append({"Name": f"Steam RunningAppID {running}", "ProcessId": None})
@@ -455,8 +491,10 @@ def _steam_games(steam_exe, profile):
 
 
 def _steam_running(timeout=15):
-    return any(str(process.get("Name", "")).casefold() == "steam.exe"
-               for process in _processes(timeout=timeout))
+    return any(
+        str(process.get("Name", "")).casefold() == "steam.exe"
+        for process in _processes(timeout=timeout)
+    )
 
 
 def _stop_steam(steam_exe, profile, emit):
@@ -472,14 +510,23 @@ def _stop_steam(steam_exe, profile, emit):
                 games = []
                 break
     if games:
-        raise LaunchError("A Steam game is running; launch options were left unchanged. Close the game first.")
+        raise LaunchError(
+            "A Steam game is running; launch options were left unchanged. Close the game first."
+        )
     running = _steam_running()
     if not running:
         return False
-    _emit(emit, "Asking Steam to exit normally before updating this game's launch options.")
-    subprocess.Popen([str(steam_exe), "-shutdown"], stdin=open(os.devnull, "rb"),
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    _emit(
+        emit,
+        "Asking Steam to exit normally before updating this game's launch options.",
+    )
+    subprocess.Popen(
+        [str(steam_exe), "-shutdown"],
+        stdin=open(os.devnull, "rb"),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         remaining = deadline - time.monotonic()
@@ -488,22 +535,31 @@ def _stop_steam(steam_exe, profile, emit):
         if not _steam_running(timeout=min(2, remaining)):
             return True
         time.sleep(min(0.25, max(0, deadline - time.monotonic())))
-    raise LaunchError("Steam did not exit within 20 seconds; nothing was edited and no process was killed.")
+    raise LaunchError(
+        "Steam did not exit within 20 seconds; nothing was edited and no process was killed."
+    )
 
 
 def _restart_steam(steam_exe):
     environment = os.environ.copy()
     for key in list(environment):
-        if (key.startswith(("NR_", "XMX_")) or key in ("ENABLE_NR_LAYER", "DISABLE_NR_LAYER",
-                "DISABLE_VK_LAYER_VALVE_steam_fossilize_1")):
+        if key.startswith(("NR_", "XMX_")) or key in (
+            "ENABLE_NR_LAYER",
+            "DISABLE_NR_LAYER",
+            "DISABLE_VK_LAYER_VALVE_steam_fossilize_1",
+        ):
             environment.pop(key, None)
     for key in ("VK_LAYER_PATH", "VK_ADD_IMPLICIT_LAYER_PATH", "VK_INSTANCE_LAYERS"):
         if "dlss" in environment.get(key, "").casefold():
             environment.pop(key, None)
-    process = subprocess.Popen([str(steam_exe), "-silent"], env=environment,
-                               stdin=open(os.devnull, "rb"), stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL,
-                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    process = subprocess.Popen(
+        [str(steam_exe), "-silent"],
+        env=environment,
+        stdin=open(os.devnull, "rb"),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
     return process.pid
 
 
@@ -518,8 +574,9 @@ def _wrapper_path(profile):
 
 
 def _steam_profile_path(profile):
-    serialized = json.dumps(profile.to_dict(), sort_keys=True, ensure_ascii=False,
-                            separators=(",", ":")).encode("utf-8")
+    serialized = json.dumps(
+        profile.to_dict(), sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
     digest = hashlib.sha256(serialized).hexdigest()
     return Path(profile.root) / "work/windows-wizard/steam-profiles" / (digest + ".json")
 
@@ -530,7 +587,9 @@ def _ensure_steam_profile(profile):
     expected = profile.to_dict()
     if path.exists():
         if json.loads(path.read_text(encoding="utf-8")) != expected:
-            raise LaunchError("Steam wrapper profile was modified; the existing file was preserved.")
+            raise LaunchError(
+                "Steam wrapper profile was modified; the existing file was preserved."
+            )
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
         data = (json.dumps(expected, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
@@ -543,11 +602,16 @@ def _steam_python(profile):
     candidate = Path(profile.python).with_name("pythonw.exe")
     try:
         info = candidate.lstat()
-        if (stat.S_ISREG(info.st_mode) and not candidate.is_symlink()
-                and not getattr(candidate, "is_junction", lambda: False)()
-                and not (getattr(info, "st_file_attributes", 0)
-                         & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
-                and _core().pe_architecture(candidate) == "x64"):
+        if (
+            stat.S_ISREG(info.st_mode)
+            and not candidate.is_symlink()
+            and not getattr(candidate, "is_junction", lambda: False)()
+            and not (
+                getattr(info, "st_file_attributes", 0)
+                & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            )
+            and process.pe_architecture(candidate) == "x64"
+        ):
             return candidate
     except OSError as error:
         sys.stderr.write(f"windows_launch: no interpreter under the prefix: {error}\n")
@@ -555,8 +619,16 @@ def _steam_python(profile):
 
 
 def steam_launch_options(profile):
-    return " ".join((_quote(_steam_python(profile)), _quote(_wrapper_path(profile)), "--steam-wrapper",
-                     _quote(_steam_profile_path(profile)), "--", "%command%"))
+    return " ".join(
+        (
+            _quote(_steam_python(profile)),
+            _quote(_wrapper_path(profile)),
+            "--steam-wrapper",
+            _quote(_steam_profile_path(profile)),
+            "--",
+            "%command%",
+        )
+    )
 
 
 def _ordinary_options(options):
@@ -574,8 +646,13 @@ def _manual(profile, reason):
         options = steam_launch_options(profile)
     except (OSError, ValueError, LaunchError):
         options = None
-    return {"ok": False, "manual": True, "error": str(reason), "launch_options": options,
-            "original_options_preserved": True}
+    return {
+        "ok": False,
+        "manual": True,
+        "error": str(reason),
+        "launch_options": options,
+        "original_options_preserved": True,
+    }
 
 
 def configure_steam(profile, steam_exe=None, emit=None):
@@ -606,45 +683,83 @@ def configure_steam(profile, steam_exe=None, emit=None):
             if not isinstance(backup, dict) or backup.get("format") != 1:
                 raise LaunchError("Steam backup has an unsupported format; it was preserved.")
             if not backup.get("restored", False):
-                if (backup.get("root") == _key(profile.root) and backup.get("app_id") == app_id
-                        and backup.get("localconfig") == str(config)
-                        and original == backup.get("installed_launch_options")
-                        and backup.get("profile_snapshot") == str(_steam_profile_path(profile))):
+                if (
+                    backup.get("root") == _key(profile.root)
+                    and backup.get("app_id") == app_id
+                    and backup.get("localconfig") == str(config)
+                    and original == backup.get("installed_launch_options")
+                    and backup.get("profile_snapshot") == str(_steam_profile_path(profile))
+                ):
                     _ensure_steam_profile(profile)
-                    result = {"ok": True, "already_configured": True, "app_id": app_id,
-                              "launch_options": original, "backup": str(backup_path)}
+                    result = {
+                        "ok": True,
+                        "already_configured": True,
+                        "app_id": app_id,
+                        "launch_options": original,
+                        "backup": str(backup_path),
+                    }
                     return result
-                raise LaunchError("An unresolved Steam backup exists; it was preserved. Restore it before reconfiguring.")
+                raise LaunchError(
+                    "An unresolved Steam backup exists; it was preserved. Restore it before reconfiguring."
+                )
         if not _ordinary_options(original):
-            raise LaunchError("Existing Steam options contain a custom wrapper or shell command; they were preserved. Use manual configuration.")
+            raise LaunchError(
+                "Existing Steam options contain a custom wrapper or shell command; they were preserved. Use manual configuration."
+            )
         snapshot = _ensure_steam_profile(profile)
         installed = wrapper + (" " + original if original else "")
         restarted = _stop_steam(executable, profile, emit)
         before = config.read_bytes()
         if _options(before, app_id) != original:
-            raise LaunchError("Steam launch options changed while stopping Steam; they were left untouched.")
+            raise LaunchError(
+                "Steam launch options changed while stopping Steam; they were left untouched."
+            )
         after = _edit_options(before, app_id, installed)
-        backup = {"format": 1, "root": _key(profile.root), "app_id": app_id,
-                  "localconfig": str(config), "steam_exe": str(executable),
-                  "profile_snapshot": str(snapshot), "game_exe": str(profile.game_exe),
-                  "original_launch_options": original, "installed_launch_options": installed,
-                  "original_file_sha256": hashlib.sha256(before).hexdigest(),
-                  "prepared_utc": datetime.now(timezone.utc).isoformat(), "restored": False}
+        backup = {
+            "format": 1,
+            "root": _key(profile.root),
+            "app_id": app_id,
+            "localconfig": str(config),
+            "steam_exe": str(executable),
+            "profile_snapshot": str(snapshot),
+            "game_exe": str(profile.game_exe),
+            "original_launch_options": original,
+            "installed_launch_options": installed,
+            "original_file_sha256": hashlib.sha256(before).hexdigest(),
+            "prepared_utc": datetime.now(UTC).isoformat(),
+            "restored": False,
+        }
         _json_write(backup_path, backup)
         _atomic_write(config, before, after)
         updated = True
         backup["configured"] = True
         _json_write(backup_path, backup)
         _emit(emit, "Steam wrapper installed; existing game arguments were preserved.")
-        result = {"ok": True, "configured": True, "app_id": app_id, "launch_options": installed,
-                  "localconfig": str(config), "backup": str(backup_path),
-                  "profile_snapshot": str(snapshot), "original_launch_options": original}
+        result = {
+            "ok": True,
+            "configured": True,
+            "app_id": app_id,
+            "launch_options": installed,
+            "localconfig": str(config),
+            "backup": str(backup_path),
+            "profile_snapshot": str(snapshot),
+            "original_launch_options": original,
+        }
         return result
-    except (OSError, UnicodeError, ValueError, LaunchError, subprocess.SubprocessError) as error:
+    except (
+        OSError,
+        UnicodeError,
+        ValueError,
+        LaunchError,
+        subprocess.SubprocessError,
+    ) as error:
         result = _manual(profile, error)
         if updated:
-            result.update(configured=True, original_options_preserved=False,
-                          backup=str(backup_path))
+            result.update(
+                configured=True,
+                original_options_preserved=False,
+                backup=str(backup_path),
+            )
         return result
     finally:
         if restarted and executable is not None:
@@ -653,8 +768,11 @@ def configure_steam(profile, steam_exe=None, emit=None):
             try:
                 result["steam_restart_pid"] = _restart_steam(executable)
             except (OSError, subprocess.SubprocessError) as error:
-                result.update(ok=False, steam_restart_error=str(error),
-                              error="Steam options were handled, but Steam could not restart: " + str(error))
+                result.update(
+                    ok=False,
+                    steam_restart_error=str(error),
+                    error="Steam options were handled, but Steam could not restart: " + str(error),
+                )
 
 
 def restore_steam(profile, emit=None):
@@ -667,8 +785,11 @@ def restore_steam(profile, emit=None):
         if not backup_path.is_file():
             return {"ok": True, "already_restored": True, "changed": False}
         backup = json.loads(backup_path.read_text(encoding="utf-8"))
-        if (not isinstance(backup, dict) or backup.get("root") != _key(profile.root)
-                or backup.get("format") != 1):
+        if (
+            not isinstance(backup, dict)
+            or backup.get("root") != _key(profile.root)
+            or backup.get("format") != 1
+        ):
             raise LaunchError("Steam backup belongs to a different release; it was preserved.")
         if backup.get("restored"):
             return {"ok": True, "already_restored": True, "changed": False}
@@ -680,30 +801,56 @@ def restore_steam(profile, emit=None):
             # Recover an interrupted edit whose VDF commit succeeded before its
             # backup metadata could be written (or whose commit never started).
             backup["restored"] = True
-            backup["restored_utc"] = datetime.now(timezone.utc).isoformat()
+            backup["restored_utc"] = datetime.now(UTC).isoformat()
             _json_write(backup_path, backup)
-            result = {"ok": True, "already_restored": True, "changed": False,
-                      "app_id": app_id, "backup": str(backup_path), "metadata_recovered": True}
+            result = {
+                "ok": True,
+                "already_restored": True,
+                "changed": False,
+                "app_id": app_id,
+                "backup": str(backup_path),
+                "metadata_recovered": True,
+            }
             return result
         if current != backup.get("installed_launch_options"):
-            raise LaunchError("Steam launch options no longer match this wizard's wrapper; the user's current options were preserved.")
+            raise LaunchError(
+                "Steam launch options no longer match this wizard's wrapper; the user's current options were preserved."
+            )
         executable = _steam_exe(Path(backup["steam_exe"]))
         restarted = _stop_steam(executable, profile, emit)
         before = config.read_bytes()
         if _options(before, app_id) != backup["installed_launch_options"]:
-            raise LaunchError("Steam launch options changed while stopping Steam; they were left untouched.")
+            raise LaunchError(
+                "Steam launch options changed while stopping Steam; they were left untouched."
+            )
         _atomic_write(config, before, _edit_options(before, app_id, original))
         updated = True
         backup["restored"] = True
-        backup["restored_utc"] = datetime.now(timezone.utc).isoformat()
+        backup["restored_utc"] = datetime.now(UTC).isoformat()
         _json_write(backup_path, backup)
         _emit(emit, "Original Steam launch options restored.")
-        result = {"ok": True, "changed": True, "app_id": app_id,
-                  "launch_options": original, "backup": str(backup_path)}
+        result = {
+            "ok": True,
+            "changed": True,
+            "app_id": app_id,
+            "launch_options": original,
+            "backup": str(backup_path),
+        }
         return result
-    except (OSError, UnicodeError, ValueError, KeyError, LaunchError, subprocess.SubprocessError) as error:
-        result = {"ok": False, "error": str(error), "original_options_preserved": not updated,
-                  "changed": updated}
+    except (
+        OSError,
+        UnicodeError,
+        ValueError,
+        KeyError,
+        LaunchError,
+        subprocess.SubprocessError,
+    ) as error:
+        result = {
+            "ok": False,
+            "error": str(error),
+            "original_options_preserved": not updated,
+            "changed": updated,
+        }
         return result
     finally:
         if restarted and executable is not None:
@@ -712,26 +859,36 @@ def restore_steam(profile, emit=None):
             try:
                 result["steam_restart_pid"] = _restart_steam(executable)
             except (OSError, subprocess.SubprocessError) as error:
-                result.update(ok=False, steam_restart_error=str(error),
-                              error="Steam options were handled, but Steam could not restart: " + str(error))
+                result.update(
+                    ok=False,
+                    steam_restart_error=str(error),
+                    error="Steam options were handled, but Steam could not restart: " + str(error),
+                )
 
 
 def _ready(profile):
-    checked = _core().validate(profile)
+    checked = deps.validate(profile)
     if not checked.get("ok"):
-        raise LaunchError(checked.get("error") or "The selected release/game/Python did not validate.")
+        raise LaunchError(
+            checked.get("error") or "The selected release/game/Python did not validate."
+        )
     marker = Path(profile.game_exe).parent / "dlss-nr/.windows-wizard-owner.json"
     try:
         owner = json.loads(marker.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         raise LaunchError("Install this profile's layer before launching the game.") from error
-    if (not isinstance(owner, dict) or owner.get("schema_version") != _core().SCHEMA_VERSION
-            or not owner.get("root")
-            or _key(owner["root"]) != _key(profile.root)):
+    if (
+        not isinstance(owner, dict)
+        or owner.get("schema_version") != config.SCHEMA_VERSION
+        or not owner.get("root")
+        or _key(owner["root"]) != _key(profile.root)
+    ):
         raise LaunchError("The installed game layer belongs to another release.")
     games = active_game_processes(profile)
     if games:
-        raise LaunchError("A game using this release is already running; its trigger and launch state were preserved.")
+        raise LaunchError(
+            "A game using this release is already running; its trigger and launch state were preserved."
+        )
 
 
 def _launch_direct(profile, emit=None, original_command=None):
@@ -743,46 +900,70 @@ def _launch_direct(profile, emit=None, original_command=None):
             raise LaunchError("Steam did not provide its original game command after --.")
         original_exe = Path(original_command[0])
         install, _ = _installation(profile.game_exe)
-        if (not original_exe.is_file() or original_exe.suffix.casefold() != ".exe"
-                or not _inside(original_exe, install)):
-            raise LaunchError("Steam's original executable is outside the selected game's installation; no wrapper was executed.")
+        if (
+            not original_exe.is_file()
+            or original_exe.suffix.casefold() != ".exe"
+            or not _inside(original_exe, install)
+        ):
+            raise LaunchError(
+                "Steam's original executable is outside the selected game's installation; no wrapper was executed."
+            )
         tail = list(original_command[1:])
     arguments = list(getattr(profile, "game_args", []) or [])
     if not all(isinstance(item, str) and "\0" not in item for item in tail + arguments):
         raise LaunchError("Game arguments must be strings without NUL characters.")
-    environment = _core().runtime_env(profile)
+    environment = state.runtime_env(profile)
     if environment.get("NR_PYTHON") != str(profile.python):
         raise LaunchError("Runtime Python does not match the user's selected interpreter.")
-    switched = _core().set_effect(profile, False)
+    switched = manage.set_effect(profile, False)
     if not switched.get("ok"):
         raise LaunchError(switched.get("error") or "Could not start with the effect off.")
     directory = _work(profile)
-    token = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(4)
+    token = datetime.now(UTC).strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(4)
     stdout_path = directory / (token + ".game.stdout.log")
     stderr_path = directory / (token + ".game.stderr.log")
     command = [str(profile.game_exe), *tail, *arguments]
     daemon_log = Path(environment["NR_LAYER_LOG"])
     daemon_offset = daemon_log.stat().st_size if daemon_log.exists() else 0
     with stdout_path.open("xb") as stdout, stderr_path.open("xb") as stderr:
-        process = subprocess.Popen(command, cwd=str(Path(profile.game_exe).parent), env=environment,
-                                   stdin=open(os.devnull, "rb"), stdout=stdout, stderr=stderr, shell=False)
-    state = {"ok": True, "mode": "steam-wrapper" if original_command is not None else "direct",
-             "pid": process.pid, "command": command, "command_display": subprocess.list2cmdline(command),
-             "stdout_log": str(stdout_path), "stderr_log": str(stderr_path),
-             "daemon_log": str(daemon_log), "daemon_start_bytes": daemon_offset,
-             "root": str(profile.root), "game_exe": str(profile.game_exe),
-             "environment": {key: value for key, value in environment.items()
-                             if key.startswith(("NR_", "VK_", "ENABLE_NR", "DISABLE_VK_LAYER_VALVE"))},
-             "trigger_initially_exists": False, "started_utc": datetime.now(timezone.utc).isoformat(),
-             "exit_code": process.poll()}
-    if state["exit_code"] not in (None, 0):
-        state.update(ok=False, error=f"Game exited immediately with code {state['exit_code']}.")
+        process = subprocess.Popen(
+            command,
+            cwd=str(Path(profile.game_exe).parent),
+            env=environment,
+            stdin=open(os.devnull, "rb"),
+            stdout=stdout,
+            stderr=stderr,
+            shell=False,
+        )
+    record = {
+        "ok": True,
+        "mode": "steam-wrapper" if original_command is not None else "direct",
+        "pid": process.pid,
+        "command": command,
+        "command_display": subprocess.list2cmdline(command),
+        "stdout_log": str(stdout_path),
+        "stderr_log": str(stderr_path),
+        "daemon_log": str(daemon_log),
+        "daemon_start_bytes": daemon_offset,
+        "root": str(profile.root),
+        "game_exe": str(profile.game_exe),
+        "environment": {
+            key: value
+            for key, value in environment.items()
+            if key.startswith(("NR_", "VK_", "ENABLE_NR", "DISABLE_VK_LAYER_VALVE"))
+        },
+        "trigger_initially_exists": False,
+        "started_utc": datetime.now(UTC).isoformat(),
+        "exit_code": process.poll(),
+    }
+    if record["exit_code"] not in (None, 0):
+        record.update(ok=False, error=f"Game exited immediately with code {record['exit_code']}.")
     if original_exe is not None:
-        state["steam_original_exe"] = str(original_exe)
-        state["executable_substituted"] = _key(original_exe) != _key(profile.game_exe)
-    _json_write(directory / "launch-state.json", state)
+        record["steam_original_exe"] = str(original_exe)
+        record["executable_substituted"] = _key(original_exe) != _key(profile.game_exe)
+    _json_write(directory / "launch-state.json", record)
     _emit(emit, "Game launched with the effect off: " + str(profile.game_exe))
-    return state, process
+    return record, process
 
 
 def launch(profile, emit=None):
@@ -805,14 +986,16 @@ def main(argv=None):
     profile = None
     try:
         data = json.loads(Path(args.steam_wrapper).read_text(encoding="utf-8-sig"))
-        profile = _core().Profile.from_dict(data)
+        profile = config.Profile.from_dict(data)
         expected = _steam_profile_path(profile)
         if _key(args.steam_wrapper) != _key(expected):
-            raise LaunchError("Steam wrapper profile does not match its immutable release snapshot.")
-        result, process = _launch_direct(profile, original_command=argv[split + 1:])
+            raise LaunchError(
+                "Steam wrapper profile does not match its immutable release snapshot."
+            )
+        result, process = _launch_direct(profile, original_command=argv[split + 1 :])
         code = process.wait()
         result["exit_code"] = code
-        result["ended_utc"] = datetime.now(timezone.utc).isoformat()
+        result["ended_utc"] = datetime.now(UTC).isoformat()
         _json_write(_work(profile) / "launch-state.json", result)
         return code
     except (OSError, ValueError, LaunchError, subprocess.SubprocessError) as error:
@@ -820,10 +1003,16 @@ def main(argv=None):
             print("Windows NR Steam wrapper: " + str(error), file=sys.stderr, flush=True)
         if profile is not None:
             try:
-                _json_write(_work(profile) / "steam-wrapper-last-error.json",
-                            {"ok": False, "error": str(error), "wrapper_pid": os.getpid(),
-                             "profile_snapshot": args.steam_wrapper,
-                             "time_utc": datetime.now(timezone.utc).isoformat()})
+                _json_write(
+                    _work(profile) / "steam-wrapper-last-error.json",
+                    {
+                        "ok": False,
+                        "error": str(error),
+                        "wrapper_pid": os.getpid(),
+                        "profile_snapshot": args.steam_wrapper,
+                        "time_utc": datetime.now(UTC).isoformat(),
+                    },
+                )
             except (OSError, LaunchError) as error:
                 sys.stderr.write(f"windows_launch: cannot write the last-error file: {error}\n")
         return 1

@@ -12,6 +12,7 @@ Each gets a wrapper with the SDK's own prototype, so the compiler checks the sig
 Writes nr_vulkan_proxy_exports.h and nr_vulkan_proxy.def beside this file; --check only says
 whether they are what the SDK's headers give.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -21,7 +22,7 @@ import re
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
-PROTOTYPE = re.compile(r"VKAPI_ATTR\s+(.+?)\s+VKAPI_CALL\s+(vk\w+)\(\s*(.*?)\);", re.S)
+PROTOTYPE = re.compile(r"VKAPI_ATTR\s+(.+?)\s+VKAPI_CALL\s+(vk\w+)\(\s*(.*?)\);", re.DOTALL)
 
 
 def prototypes(include):
@@ -30,7 +31,10 @@ def prototypes(include):
         text = (include / "vulkan" / header).read_text(encoding="utf-8")
         for returns, name, params in PROTOTYPE.findall(text):
             params = " ".join(params.split())
-            found[name] = (" ".join(returns.split()), "" if params == "void" else params)
+            found[name] = (
+                " ".join(returns.split()),
+                "" if params == "void" else params,
+            )
     return found
 
 
@@ -43,8 +47,10 @@ def render(names, found):
     missing = [name for name in names if name not in found]
     if missing:
         raise SystemExit("no prototype for: " + ", ".join(missing))
-    lines = ["/* Written by vulkan_proxy_gen.py from vulkan-1.exports and the Vulkan SDK's headers;",
-             " * not edited by hand. One wrapper for each function the loader exports. */"]
+    lines = [
+        "/* Written by vulkan_proxy_gen.py from vulkan-1.exports and the Vulkan SDK's headers;",
+        " * not edited by hand. One wrapper for each function the loader exports. */",
+    ]
     for name in names:
         returns, params = found[name]
         args = ", ".join(argument(p) for p in params.split(",")) if params else ""
@@ -62,19 +68,31 @@ def render(names, found):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sdk = os.environ.get("VULKAN_SDK")
-    parser.add_argument("--include", type=pathlib.Path, default=pathlib.Path(sdk) / "Include" if sdk else None)
+    parser.add_argument(
+        "--include",
+        type=pathlib.Path,
+        default=pathlib.Path(sdk) / "Include" if sdk else None,
+    )
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     if args.include is None:
         parser.error("no Vulkan SDK: set VULKAN_SDK or pass --include")
     names = (HERE / "vulkan-1.exports").read_text(encoding="utf-8").split()
     header, definition = render(names, prototypes(args.include))
-    outputs = {HERE / "nr_vulkan_proxy_exports.h": header, HERE / "nr_vulkan_proxy.def": definition}
+    outputs = {
+        HERE / "nr_vulkan_proxy_exports.h": header,
+        HERE / "nr_vulkan_proxy.def": definition,
+    }
     if args.check:
-        stale = [path.name for path, text in outputs.items()
-                 if not path.exists() or path.read_text(encoding="utf-8") != text]
+        stale = [
+            path.name
+            for path, text in outputs.items()
+            if not path.exists() or path.read_text(encoding="utf-8") != text
+        ]
         print("stale: " + ", ".join(stale) if stale else f"up to date ({len(names)} exports)")
         return 1 if stale else 0
     for path, text in outputs.items():

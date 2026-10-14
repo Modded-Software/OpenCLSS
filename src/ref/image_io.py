@@ -7,6 +7,7 @@ network fed an image returns a recognisable image, a wrong one returns noise.
 That is a test that needs no reference activations, which is the one thing this
 project cannot obtain.
 """
+
 import subprocess
 import tempfile
 from pathlib import Path
@@ -21,10 +22,13 @@ def _magick():
     otherwise surfaces as a CalledProcessError from a subprocess nobody expected.
     """
     import shutil
+
     if shutil.which("magick") is None:
-        raise RuntimeError("ImageMagick is needed to read and write images: install it "
-                           "(Arch: `pacman -S imagemagick`). The game path does not need "
-                           "it; the still-frame tools do.")
+        raise RuntimeError(
+            "ImageMagick is needed to read and write images: install it "
+            "(Arch: `pacman -S imagemagick`). The game path does not need "
+            "it; the still-frame tools do."
+        )
     return "magick"
 
 
@@ -43,8 +47,12 @@ def load(path, size=None):
         raw = np.frombuffer((d / "o.rgb").read_bytes(), dtype=np.uint8)
         if size is None:
             try:
-                probe = subprocess.run([_magick(), "identify", "-format", "%w %h", str(path)],
-                                       check=True, capture_output=True, text=True)
+                probe = subprocess.run(
+                    [_magick(), "identify", "-format", "%w %h", str(path)],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
             except subprocess.CalledProcessError as error:
                 raise RuntimeError(f"magick identify failed: {error.stderr}") from error
             width, height = (int(value) for value in probe.stdout.split()[:2])
@@ -63,8 +71,19 @@ def save(arr, path):
         d = Path(temporary)
         (d / "i.rgb").write_bytes((a * 255.0 + 0.5).astype(np.uint8).tobytes())
         try:
-            subprocess.run([_magick(), "-size", "%dx%d" % (W, H), "-depth", "8",
-                            "rgb:" + str(d / "i.rgb"), str(path)], check=True, capture_output=True)
+            subprocess.run(
+                [
+                    _magick(),
+                    "-size",
+                    "%dx%d" % (W, H),
+                    "-depth",
+                    "8",
+                    "rgb:" + str(d / "i.rgb"),
+                    str(path),
+                ],
+                check=True,
+                capture_output=True,
+            )
         except subprocess.CalledProcessError as error:
             raise RuntimeError(f"magick save failed: {error.stderr!r}") from error
     return path
@@ -99,7 +118,7 @@ def denoise_score(clean, out):
     o = out.reshape(-1).astype(np.float64)
     a, b = np.polyfit(c, o, 1)
     resid = o - (a * c + b)
-    score = float(np.sqrt((resid ** 2).mean()) / max(abs(a), 1e-12))
+    score = float(np.sqrt((resid**2).mean()) / max(abs(a), 1e-12))
     # Guard against collapse. Dividing by the fitted gain normalises an honest
     # rescale, but if the output has almost no dynamic range the fit is degenerate
     # and the score becomes meaningless -- 0/0 dressed up as a good result. Require
@@ -119,17 +138,18 @@ def test_pattern(H, W, seed=0):
     rng = np.random.default_rng(seed)
     y, x = np.mgrid[0:H, 0:W].astype(np.float32)
     img = np.zeros((H, W, 3), np.float32)
-    img[..., 0] = x / W                                   # horizontal ramp
-    img[..., 1] = y / H                                   # vertical ramp
+    img[..., 0] = x / W  # horizontal ramp
+    img[..., 1] = y / H  # vertical ramp
     img[..., 2] = 0.5 + 0.5 * np.sin(x / 16.0) * np.cos(y / 16.0)
-    for _ in range(12):                                   # hard-edged blocks
+    for _ in range(12):  # hard-edged blocks
         cy, cx = rng.integers(0, H - 40), rng.integers(0, W - 40)
         h, w = rng.integers(20, 40), rng.integers(20, 40)
-        img[cy:cy + h, cx:cx + w] = rng.random(3)
-    img[::17, :] = 1.0                                    # thin bright lines
+        img[cy : cy + h, cx : cx + w] = rng.random(3)
+    img[::17, :] = 1.0  # thin bright lines
     img[:, ::23] = 0.0
-    img += rng.standard_normal(img.shape).astype(np.float32) * 0.03   # sensor noise
+    img += rng.standard_normal(img.shape).astype(np.float32) * 0.03  # sensor noise
     return np.clip(img, 0, 1)
+
 
 def smooth_pattern(H, W, seed=0):
     """
@@ -149,8 +169,9 @@ def smooth_pattern(H, W, seed=0):
         acc = np.zeros((H, W), np.float32)
         for _ in range(6):
             fx, fy = rng.uniform(0.5, 6.0), rng.uniform(0.5, 6.0)
-            acc += rng.uniform(0.2, 1.0) * np.sin(2 * np.pi * (fx * x / W + fy * y / H)
-                                                  + rng.uniform(0, 6.283))
+            acc += rng.uniform(0.2, 1.0) * np.sin(
+                2 * np.pi * (fx * x / W + fy * y / H) + rng.uniform(0, 6.283)
+            )
         img[..., c] = acc
     img -= img.min()
     return img / max(float(img.max()), 1e-9)

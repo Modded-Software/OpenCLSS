@@ -13,21 +13,12 @@ representable value, and `install()` refuses to proceed unless it passes.
 
     import nr_accel; nr_accel.install()
 """
+
 from __future__ import annotations
 
-import numpy as np
-
-try:
-    import torch
-except ImportError:  # pragma: no cover - the reference must not need it
-    torch = None
-
 import nr_model
-
-
-def available():
-    return torch is not None
-
+import numpy as np
+import torch
 
 # torch parallelises every elementwise op across its thread pool. The graph issues
 # thousands of small rounding calls a frame, so that pool is synchronised thousands of
@@ -60,8 +51,11 @@ def _every_e4m3():
         exponent, mantissa = (bits >> 3) & 0xF, bits & 7
         if exponent == 0xF and mantissa == 7:
             continue
-        values.append(sign * (2.0 ** -6) * (mantissa / 8.0) if exponent == 0
-                      else sign * (2.0 ** (exponent - 7)) * (1 + mantissa / 8.0))
+        values.append(
+            sign * (2.0**-6) * (mantissa / 8.0)
+            if exponent == 0
+            else sign * (2.0 ** (exponent - 7)) * (1 + mantissa / 8.0)
+        )
     return np.array(sorted(set(values)), dtype=np.float32)
 
 
@@ -73,8 +67,6 @@ def _midpoints(values):
 
 def verify(verbose=False):
     """-> (ok, report). Every representable value, every tie, and six magnitude regimes."""
-    if torch is None:
-        return False, ["torch is not installed"]
     rng = np.random.default_rng(0)
     report, ok = [], True
     regimes = {
@@ -83,20 +75,29 @@ def verify(verbose=False):
         "subnormal": rng.uniform(-6.1e-5, 6.1e-5, 1 << 20).astype(np.float32),
         "huge": rng.standard_normal(1 << 18).astype(np.float32) * 1e5,
         "swept": np.linspace(-70000, 70000, 1 << 20, dtype=np.float32),
-        "log-swept": (np.exp(np.linspace(-30, 12, 1 << 20)).astype(np.float32)
-                      * rng.choice([-1, 1], 1 << 20)),
+        "log-swept": (
+            np.exp(np.linspace(-30, 12, 1 << 20)).astype(np.float32) * rng.choice([-1, 1], 1 << 20)
+        ),
     }
     for name, reference, fast, extra in (
-            ("half", nr_model._half_rounded, half_round,
-             {"every value": _every_half(), "ties": _midpoints(_every_half())}),
-            ("e4m3", nr_model.e4m3, e4m3_round,
-             {"every value": _every_e4m3(), "ties": _midpoints(_every_e4m3())})):
+        (
+            "half",
+            nr_model._half_rounded,
+            half_round,
+            {"every value": _every_half(), "ties": _midpoints(_every_half())},
+        ),
+        (
+            "e4m3",
+            nr_model.e4m3,
+            e4m3_round,
+            {"every value": _every_e4m3(), "ties": _midpoints(_every_e4m3())},
+        ),
+    ):
         for label, values in {**extra, **regimes}.items():
             mine, theirs = reference(values), fast(values)
             same = np.array_equal(mine, theirs, equal_nan=True)
             ok &= same
-            report.append(f"  [{'ok  ' if same else 'FAIL'}] {name} {label}"
-                          f" ({values.size} values)")
+            report.append(f"  [{'ok  ' if same else 'FAIL'}] {name} {label} ({values.size} values)")
     if verbose:
         print("\n".join(report))
     return ok, report
@@ -104,14 +105,11 @@ def verify(verbose=False):
 
 def install(check=True, threads=None):
     """Point `nr_model` at the torch rounding, after proving it changes nothing."""
-    if torch is None:
-        return False
     torch.set_num_threads(THREADS if threads is None else threads)
     if check:
         ok, report = verify()
         if not ok:
-            raise RuntimeError("torch rounding is not bit-identical:\n"
-                               + "\n".join(report))
+            raise RuntimeError("torch rounding is not bit-identical:\n" + "\n".join(report))
     nr_model.HALF_ROUND = half_round
     nr_model.E4M3_ROUND = e4m3_round
     return True
@@ -124,6 +122,7 @@ def uninstall():
 
 if __name__ == "__main__":
     import sys
+
     ok, report = verify(verbose=True)
     print("\nbit-identical" if ok else "\nDIFFERENT")
     sys.exit(0 if ok else 1)

@@ -22,22 +22,21 @@ game.
     python3 src/ref/nr_temporal.py --pan 6,0 --frames 4 IN.png OUT --gpu
     python3 src/ref/nr_temporal.py --frames-from a.png,b.png,c.png OUT --gpu
 """
+
 from __future__ import annotations
 
 import argparse
 import pathlib
-import sys
 import time
 
+import image_io
+import nr_frame
+import nr_model
 import numpy as np
+from xmxrt import elementwise
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-sys.path.insert(0, str(HERE))
-
-import nr_model  # noqa: E402
-import nr_frame  # noqa: E402
-import image_io  # noqa: E402
 
 features_mod, composition_mod, _motion_mod, temporal_mod = nr_frame.load_mlx_numpy_modules()
 
@@ -47,7 +46,7 @@ TemporalOptions = temporal_mod.TemporalOptions
 normalize_pixel_motion = temporal_mod.normalize_pixel_motion
 sample_history = temporal_mod.sample_history
 
-WEIGHTS = nr_model.default_weights()        # the prepared file when it is there
+WEIGHTS = nr_model.default_weights()  # the prepared file when it is there
 
 
 class Pipeline:
@@ -111,8 +110,9 @@ class GpuHistory:
         self.rt.write(coordinates, pairs)
         target = self._buffer("out", pixels * channels)
         self.rt.begin()
-        self.rt.sample_history(source, coordinates, target, height, width, channels,
-                               absolute=True)
+        elementwise.sample_history(
+            self.rt, source, coordinates, target, height, width, channels, absolute=True
+        )
         self.rt.submit()
         return np.array(self.rt.read(target, shape=(height, width, channels)), copy=True)
 
@@ -138,7 +138,11 @@ class VendorSession(temporal_mod.TemporalSession):
     the output is MLX-DLSS's to the bit; only what is carried changes."""
 
     def _process_prepared(self, prepared, control_mask=None):
-        frame, processing, confidence = prepared.source, prepared.color, prepared.confidence
+        frame, processing, confidence = (
+            prepared.source,
+            prepared.color,
+            prepared.confidence,
+        )
         if prepared.reset:
             self.reset()
             self.scene_cuts += 1
@@ -146,41 +150,65 @@ class VendorSession(temporal_mod.TemporalSession):
         geometry = NetworkGeometry.vendor_aligned(width, height)
         controls = self._controls()
         if self.history is None:
-            network = features_mod.make_features(processing, frame_index=self.frame_index,
-                                                 geometry=geometry, control_mask=control_mask,
-                                                 **controls)
+            network = features_mod.make_features(
+                processing,
+                frame_index=self.frame_index,
+                geometry=geometry,
+                control_mask=control_mask,
+                **controls,
+            )
             head = geometry.crop(self.pipeline.run_features(network))
-            temporal = np.clip(processing + features_mod.half(head[..., :3]) * np.float32(0.25),
-                               0, 1).astype(np.float32)
+            temporal = np.clip(
+                processing + features_mod.half(head[..., :3]) * np.float32(0.25), 0, 1
+            ).astype(np.float32)
         else:
             features = temporal_mod.make_temporal_features(
-                processing, self.history, prepared.motion, frame_index=self.frame_index,
-                history_confidence=confidence, control_mask=control_mask, **controls)
+                processing,
+                self.history,
+                prepared.motion,
+                frame_index=self.frame_index,
+                history_confidence=confidence,
+                control_mask=control_mask,
+                **controls,
+            )
             network = temporal_mod.extend_features(features, geometry, self.frame_index)
             head = geometry.crop(self.pipeline.run_features(network))
             # at intensity 1 without a mask MLX-DLSS hands back the prediction itself
             temporal = temporal_mod.compose_temporal(
-                head, processing, features, blend_scale=self.options.blend_scale,
-                history_confidence=confidence)
+                head,
+                processing,
+                features,
+                blend_scale=self.options.blend_scale,
+                history_confidence=confidence,
+            )
         grade = nr_frame.grade_for(**controls)
         kept = nr_frame.truncate_half(temporal)
         intensity = self.options.intensity
         if control_mask is None and intensity == 1 and grade is None:
-            output = temporal if self.history is not None else composition_mod.compose_head(
-                head, processing, intensity=1.0)
+            output = (
+                temporal
+                if self.history is not None
+                else composition_mod.compose_head(head, processing, intensity=1.0)
+            )
         else:
             predicted = temporal if grade is None else nr_frame.style_grade(kept, grade)
-            blend = (np.float32(intensity) if control_mask is None
-                     else np.asarray(control_mask, np.float32)[..., :1] * np.float32(intensity))
+            blend = (
+                np.float32(intensity)
+                if control_mask is None
+                else np.asarray(control_mask, np.float32)[..., :1] * np.float32(intensity)
+            )
             blend = np.clip(blend, 0, 1)
             output = np.clip(processing + blend * (predicted - processing), 0, 1).astype(np.float32)
         self.history = kept
         self.previous = frame.copy()
         self.frame_index += 1
         return composition_mod.compose_detail(
-            frame, composition_mod.resample(output, frame.shape[1], frame.shape[0]),
+            frame,
+            composition_mod.resample(output, frame.shape[1], frame.shape[0]),
             detail_strength=self.options.detail_strength,
-            colour_strength=self.options.colour_strength, radius=self.options.detail_radius)
+            colour_strength=self.options.colour_strength,
+            radius=self.options.detail_radius,
+        )
 
 
 def session(model, *, motion="zero", **options):
@@ -208,15 +236,24 @@ def pan_sequence(image, *, shift, size, frames, origin=None):
     height, width = size
     dx, dy = shift
     if origin is None:
-        origin = ((image.shape[0] - height - max(0, dy * (frames - 1))) // 2,
-                  (image.shape[1] - width - max(0, dx * (frames - 1))) // 2)
+        origin = (
+            (image.shape[0] - height - max(0, dy * (frames - 1))) // 2,
+            (image.shape[1] - width - max(0, dx * (frames - 1))) // 2,
+        )
     y0, x0 = origin
-    if (y0 < 0 or x0 < 0 or y0 + dy * (frames - 1) + height > image.shape[0]
-            or x0 + dx * (frames - 1) + width > image.shape[1]):
+    if (
+        y0 < 0
+        or x0 < 0
+        or y0 + dy * (frames - 1) + height > image.shape[0]
+        or x0 + dx * (frames - 1) + width > image.shape[1]
+    ):
         raise ValueError("the pan walks outside the source image")
-    sequence = [np.ascontiguousarray(image[y0 + dy * k:y0 + dy * k + height,
-                                           x0 + dx * k:x0 + dx * k + width])
-                for k in range(frames)]
+    sequence = [
+        np.ascontiguousarray(
+            image[y0 + dy * k : y0 + dy * k + height, x0 + dx * k : x0 + dx * k + width]
+        )
+        for k in range(frames)
+    ]
     motion = np.zeros((height, width, 2), dtype=np.float32)
     motion[..., 0] = np.float32(dx) / np.float32(width)
     motion[..., 1] = np.float32(dy) / np.float32(height)
@@ -236,7 +273,7 @@ def check_motion_convention(sequence, motions):
         u = (xx.astype(np.float32) + 0.5) / np.float32(width) + motions[index][..., 0]
         v = (yy.astype(np.float32) + 0.5) / np.float32(height) + motions[index][..., 1]
         reprojected = sample_history(sequence[index - 1], u, v)
-        inside = 8            # ignore the border, where content is genuinely new
+        inside = 8  # ignore the border, where content is genuinely new
         error = np.abs(reprojected - sequence[index])[inside:-inside, inside:-inside]
         worst = max(worst, float(error.mean()))
     return worst
@@ -266,16 +303,20 @@ def run_sequence(model, sequence, motions, *, verbose=True, **options):
         diagnostics.append(record)
         outputs.append(output)
         if verbose:
-            print(f"  frame {index}  {record['seconds']:5.1f}s  "
-                  f"history {'yes' if record['history'] else 'no ':>3}  "
-                  f"alpha mean {record['alpha_mean']:.4f} max {record['alpha_max']:.4f}  "
-                  f"change {record['change']:.5f}", flush=True)
+            print(
+                f"  frame {index}  {record['seconds']:5.1f}s  "
+                f"history {'yes' if record['history'] else 'no ':>3}  "
+                f"alpha mean {record['alpha_mean']:.4f} max {record['alpha_max']:.4f}  "
+                f"change {record['change']:.5f}",
+                flush=True,
+            )
     return outputs, diagnostics
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("input", help="one image for --pan, ignored with --frames-from")
     parser.add_argument("output_prefix")
     parser.add_argument("--weights", default=str(WEIGHTS))
@@ -283,33 +324,53 @@ def main():
     parser.add_argument("--frames", type=int, default=4)
     parser.add_argument("--size", default="384x384", help="crop size WxH for --pan")
     parser.add_argument("--frames-from", help="comma-separated image paths; motion is zero")
-    parser.add_argument("--zero-motion", action="store_true",
-                        help="feed zero motion with a moving image, as a control")
+    parser.add_argument(
+        "--zero-motion",
+        action="store_true",
+        help="feed zero motion with a moving image, as a control",
+    )
     parser.add_argument("--profile", default="standard")
     parser.add_argument("--intensity", type=float, default=1.0)
     # The vendor's panel exposes these three as guide overrides; the recovered
     # pipeline has always taken them, they were simply never wired to the CLI.
-    parser.add_argument("--motion-scale", default="1,1",
-                        help="multiplier on the supplied motion, X,Y - the panel's "
-                             "Motion Scale X/Y Multiplier")
-    parser.add_argument("--scene-cut", type=float, default=0.3,
-                        help="mean luma change that clears the history; 0 disables it")
-    parser.add_argument("--blend-scale", type=float, default=None,
-                        help="ceiling on the learned history blend (default 0.73974609375)")
+    parser.add_argument(
+        "--motion-scale",
+        default="1,1",
+        help="multiplier on the supplied motion, X,Y - the panel's Motion Scale X/Y Multiplier",
+    )
+    parser.add_argument(
+        "--scene-cut",
+        type=float,
+        default=0.3,
+        help="mean luma change that clears the history; 0 disables it",
+    )
+    parser.add_argument(
+        "--blend-scale",
+        type=float,
+        default=None,
+        help="ceiling on the learned history blend (default 0.73974609375)",
+    )
     parser.add_argument("--gpu", action="store_true")
-    parser.add_argument("--resident", action="store_true",
-                        help="run the whole graph on the GPU (the fastest path)")
-    parser.add_argument("--accel", action="store_true",
-                        help="torch's SIMD half and E4M3 conversions (bit-identical)")
+    parser.add_argument(
+        "--resident",
+        action="store_true",
+        help="run the whole graph on the GPU (the fastest path)",
+    )
+    parser.add_argument(
+        "--accel",
+        action="store_true",
+        help="torch's SIMD half and E4M3 conversions (bit-identical)",
+    )
     args = parser.parse_args()
 
     if args.accel:
         import nr_accel
-        print(f"accel {'on' if nr_accel.install() else 'requested, but torch is absent'}",
-              flush=True)
+
+        nr_accel.install()
+        print("accel on", flush=True)
     if args.gpu:
-        sys.path.insert(0, str(ROOT / "src" / "gpu"))
         import nr_xmx
+
         print(f"backend {nr_xmx.install()}", flush=True)
 
     if args.frames_from:
@@ -318,11 +379,17 @@ def main():
     else:
         width, height = (int(part) for part in args.size.lower().split("x"))
         shift = tuple(int(part) for part in args.pan.split(","))
-        sequence, motions = pan_sequence(image_io.load(args.input), shift=shift,
-                                         size=(height, width), frames=args.frames)
+        sequence, motions = pan_sequence(
+            image_io.load(args.input),
+            shift=shift,
+            size=(height, width),
+            frames=args.frames,
+        )
         print(f"pan {shift[0]},{shift[1]} px/frame over {args.frames} frames of {width}x{height}")
-        print(f"motion convention check: reprojection error {check_motion_convention(sequence, motions):.5f} "
-              "(should be small; a sign error shows up here)")
+        print(
+            f"motion convention check: reprojection error {check_motion_convention(sequence, motions):.5f} "
+            "(should be small; a sign error shows up here)"
+        )
         if args.zero_motion:
             motions = [np.zeros_like(motion) for motion in motions]
             print("CONTROL: motion forced to zero")
@@ -336,8 +403,11 @@ def main():
     if scale != (1.0, 1.0):
         motions = [motion * np.float32(scale) for motion in motions]
         print(f"motion scaled by {scale[0]},{scale[1]}")
-    options = {"profile": args.profile, "intensity": args.intensity,
-               "scene_cut_threshold": args.scene_cut}
+    options = {
+        "profile": args.profile,
+        "intensity": args.intensity,
+        "scene_cut_threshold": args.scene_cut,
+    }
     if args.blend_scale is not None:
         options["blend_scale"] = args.blend_scale
     outputs, _ = run_sequence(model, sequence, motions, **options)

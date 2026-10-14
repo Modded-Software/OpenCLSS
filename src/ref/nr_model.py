@@ -14,6 +14,7 @@ the packed container.  See notes/phase6-mlx-dlss-containers.md.
 The single GEMM entry point is `matmul()`; point `nr_model.MATMUL` at another
 callable to run the whole graph on different hardware.
 """
+
 from __future__ import annotations
 
 import json
@@ -61,8 +62,8 @@ MLX_DLSS_GRAPH = os.environ.get("NR_MLX_DLSS_GRAPH", "0") not in ("0", "", "no")
 # reference keeps the literal form and a backend opts in.
 FUSE_BRANCHED = os.environ.get("NR_FUSE_BRANCHED", "0") not in ("0", "", "no")
 
-MATMUL = None      # a callable(a, b) -> a @ b, to redirect every GEMM
-MATMUL_NT = None   # a callable(a, b) -> a @ b^T, for the attention scores
+MATMUL = None  # a callable(a, b) -> a @ b, to redirect every GEMM
+MATMUL_NT = None  # a callable(a, b) -> a @ b^T, for the attention scores
 
 
 def matmul(a, b):
@@ -129,7 +130,6 @@ _GATE_SLOPE = np.float32(-0.055908203125)
 _GATE_INTERCEPT = np.float32(0.447265625)
 _GATE_BIAS = np.float32(0.89453125)
 
-
 # Optional accelerators. Both begin as the numpy implementations below; a backend
 # may replace them with something faster, and `src/ref/nr_accel.py` does exactly that
 # with torch, which has SIMD conversions where numpy has none - measured 2.29 against
@@ -178,8 +178,8 @@ def quadratic_gate_activation(value):
     return _half_rounded(gate)
 
 
-_E4M3_NORMAL_FLOOR = np.float32(2.0 ** -6)
-_E4M3_SUBNORMAL_STEP = np.float32(2.0 ** -9)
+_E4M3_NORMAL_FLOOR = np.float32(2.0**-6)
+_E4M3_SUBNORMAL_STEP = np.float32(2.0**-9)
 
 
 def _e4m3_chunk(value):
@@ -189,7 +189,7 @@ def _e4m3_chunk(value):
     exponent_bits = (normal_magnitude.view(np.int32) >> 23) & 0xFF
     normal_step = ((exponent_bits - 3) << 23).view(np.float32)
     step = np.where(magnitude < _E4M3_NORMAL_FLOOR, _E4M3_SUBNORMAL_STEP, normal_step)
-    rounded = np.rint(magnitude / step) * step          # np.rint is round-half-even
+    rounded = np.rint(magnitude / step) * step  # np.rint is round-half-even
     return np.where(single < 0, -rounded, rounded).astype(np.float32)
 
 
@@ -204,7 +204,7 @@ def e4m3(value):
     flat = value.reshape(-1)
     out = np.empty_like(flat)
     for start in range(0, flat.shape[0], limit):
-        out[start:start + limit] = _e4m3_chunk(flat[start:start + limit])
+        out[start : start + limit] = _e4m3_chunk(flat[start : start + limit])
     return out.reshape(value.shape)
 
 
@@ -226,7 +226,10 @@ def vendor_approximate_softmax(value):
     packed = pairs[..., 0] | (pairs[..., 1] << np.uint32(16))
     transformed = (packed << np.uint32(5)) + np.uint32(0x7FF88000)
     weight_bits = np.stack(
-        (transformed & np.uint32(0xFFFF), (transformed >> np.uint32(16)) & np.uint32(0xFFFF)),
+        (
+            transformed & np.uint32(0xFFFF),
+            (transformed >> np.uint32(16)) & np.uint32(0xFFFF),
+        ),
         axis=-1,
     ).reshape(bits.shape)
     weights = weight_bits.astype(np.uint16).view(np.float16)
@@ -252,27 +255,41 @@ def vendor_cosine_normalize(value):
             squared = np.maximum(squared, np.float16(COSINE_NORM_FLOOR))
             # One rounding, as `rsqrt` is: a half sqrt followed by a half divide
             # rounds twice and drifts by 1e-03.
-            reciprocal = (np.float32(1.0) / np.sqrt(squared.astype(np.float32))
-                          ).astype(np.float16)
-            return (narrow.astype(np.float32)
-                    * reciprocal.astype(np.float32)).astype(np.float16).astype(np.float32)
+            reciprocal = (np.float32(1.0) / np.sqrt(squared.astype(np.float32))).astype(np.float16)
+            return (
+                (narrow.astype(np.float32) * reciprocal.astype(np.float32))
+                .astype(np.float16)
+                .astype(np.float32)
+            )
     partial = []
     for lane in range(4):
         lane_partial = []
         for parity in range(2):
             channel = lane * 2 + parity
-            first = half_fma(half[..., channel + 8], half[..., channel + 8],
-                             half_multiply(half[..., channel], half[..., channel]))
-            second = half_fma(half[..., channel + 24], half[..., channel + 24],
-                              half_multiply(half[..., channel + 16], half[..., channel + 16]))
+            first = half_fma(
+                half[..., channel + 8],
+                half[..., channel + 8],
+                half_multiply(half[..., channel], half[..., channel]),
+            )
+            second = half_fma(
+                half[..., channel + 24],
+                half[..., channel + 24],
+                half_multiply(half[..., channel + 16], half[..., channel + 16]),
+            )
             lane_partial.append(half_add(first, second))
         partial.append(np.stack(lane_partial, axis=-1))
-    partial_tensor = np.stack(partial, axis=-2)                     # (..., 4, 2)
-    xor_two = np.stack([half_add(partial_tensor[..., lane, :],
-                                 partial_tensor[..., lane ^ 2, :]) for lane in range(4)],
-                       axis=-2)
-    xor_one = np.stack([half_add(xor_two[..., lane, :], xor_two[..., lane ^ 1, :])
-                        for lane in range(4)], axis=-2)
+    partial_tensor = np.stack(partial, axis=-2)  # (..., 4, 2)
+    xor_two = np.stack(
+        [
+            half_add(partial_tensor[..., lane, :], partial_tensor[..., lane ^ 2, :])
+            for lane in range(4)
+        ],
+        axis=-2,
+    )
+    xor_one = np.stack(
+        [half_add(xor_two[..., lane, :], xor_two[..., lane ^ 1, :]) for lane in range(4)],
+        axis=-2,
+    )
     norm = half_add(xor_one[..., 0, 0], xor_one[..., 0, 1]).astype(np.float32)
     norm = np.maximum(norm, np.float32(np.float16(COSINE_NORM_FLOOR)))
     reciprocal = _half_rounded(np.float32(1.0) / np.sqrt(norm))[..., None]
@@ -283,7 +300,8 @@ def vendor_cosine_publish(value, scale=None):
     normalized = vendor_cosine_normalize(value)
     if scale is not None:
         normalized = _half_rounded(
-            normalized * _half_rounded(scale).reshape(1, scale.shape[0], 1, 1))
+            normalized * _half_rounded(scale).reshape(1, scale.shape[0], 1, 1)
+        )
     return e4m3(normalized)
 
 
@@ -379,25 +397,32 @@ def _per_token(function, value):
     flat = value.reshape(-1, channels)
     if CHUNK_TOKENS <= 0 or flat.shape[0] <= CHUNK_TOKENS:
         return function(value)
-    parts = [function(flat[start:start + CHUNK_TOKENS])
-             for start in range(0, flat.shape[0], CHUNK_TOKENS)]
+    parts = [
+        function(flat[start : start + CHUNK_TOKENS])
+        for start in range(0, flat.shape[0], CHUNK_TOKENS)
+    ]
     return np.concatenate(parts, axis=0).reshape(*value.shape[:-1], parts[0].shape[-1])
 
 
 def _rows(function, *tensors):
     """Apply a token-local function of several NHWC tensors in row chunks."""
     lead = tensors[0]
-    if (CHUNK_TOKENS <= 0 or lead.ndim != 4
-            or lead.shape[0] * lead.shape[1] * lead.shape[2] <= CHUNK_TOKENS):
+    if (
+        CHUNK_TOKENS <= 0
+        or lead.ndim != 4
+        or lead.shape[0] * lead.shape[1] * lead.shape[2] <= CHUNK_TOKENS
+    ):
         return function(*tensors)
     rows = max(1, CHUNK_TOKENS // (lead.shape[0] * lead.shape[2]))
     out = None
     for y0 in range(0, lead.shape[1], rows):
-        part = function(*(t[:, y0:y0 + rows] for t in tensors))
+        part = function(*(t[:, y0 : y0 + rows] for t in tensors))
         if out is None:
-            out = np.empty((lead.shape[0], lead.shape[1], lead.shape[2], part.shape[-1]),
-                           dtype=part.dtype)
-        out[:, y0:y0 + rows] = part
+            out = np.empty(
+                (lead.shape[0], lead.shape[1], lead.shape[2], part.shape[-1]),
+                dtype=part.dtype,
+            )
+        out[:, y0 : y0 + rows] = part
     return out
 
 
@@ -407,8 +432,9 @@ def _residual_per_token(value, branch, cosine):
         return cosine_residual(value, branch, cosine)
     rows = max(1, CHUNK_TOKENS // (branch.shape[0] * branch.shape[2]))
     for y0 in range(0, branch.shape[1], rows):
-        branch[:, y0:y0 + rows] = cosine_residual(
-            value[:, y0:y0 + rows], branch[:, y0:y0 + rows], cosine)
+        branch[:, y0 : y0 + rows] = cosine_residual(
+            value[:, y0 : y0 + rows], branch[:, y0 : y0 + rows], cosine
+        )
     return branch
 
 
@@ -417,9 +443,17 @@ def _residual_per_token(value, branch, cosine):
 # --------------------------------------------------------------------------
 
 
-def cosine_attention(value, *, qkv_weight, attention_scale, attention_bias,
-                     projection_weight, head_count, logit_cap=None,
-                     symmetric_logit_cap=False):
+def cosine_attention(
+    value,
+    *,
+    qkv_weight,
+    attention_scale,
+    attention_bias,
+    projection_weight,
+    head_count,
+    logit_cap=None,
+    symmetric_logit_cap=False,
+):
     if value.ndim != 3:
         raise ValueError("attention input must be rank 3")
     batch_count, token_count, channels = value.shape
@@ -441,8 +475,11 @@ def cosine_attention(value, *, qkv_weight, attention_scale, attention_bias,
     if attention_bias is not None:
         scores = scores + attention_bias.reshape(1, head_count, token_count, token_count)
     if logit_cap is not None:
-        scores = (np.clip(scores, -logit_cap, logit_cap) if symmetric_logit_cap
-                  else np.minimum(scores, logit_cap))
+        scores = (
+            np.clip(scores, -logit_cap, logit_cap)
+            if symmetric_logit_cap
+            else np.minimum(scores, logit_cap)
+        )
     probabilities = vendor_approximate_softmax(scores)
     attended = matmul(probabilities, projected_value).transpose(0, 2, 1, 3)
     attended = e4m3(np.ascontiguousarray(attended).reshape(batch_count, token_count, channels))
@@ -455,23 +492,49 @@ def partition_windows(value, window_size):
     batch_count, height, width, channels = value.shape
     if height % window_size or width % window_size:
         raise ValueError("spatial dimensions must be divisible by window size")
-    return (value.reshape(batch_count, height // window_size, window_size,
-                          width // window_size, window_size, channels)
-            .transpose(0, 1, 3, 2, 4, 5)
-            .reshape(-1, window_size * window_size, channels))
+    return (
+        value.reshape(
+            batch_count,
+            height // window_size,
+            window_size,
+            width // window_size,
+            window_size,
+            channels,
+        )
+        .transpose(0, 1, 3, 2, 4, 5)
+        .reshape(-1, window_size * window_size, channels)
+    )
 
 
 def reverse_windows(windows, *, batch_count, height, width, window_size):
     channels = windows.shape[-1]
-    return (windows.reshape(batch_count, height // window_size, width // window_size,
-                            window_size, window_size, channels)
-            .transpose(0, 1, 3, 2, 4, 5)
-            .reshape(batch_count, height, width, channels))
+    return (
+        windows.reshape(
+            batch_count,
+            height // window_size,
+            width // window_size,
+            window_size,
+            window_size,
+            channels,
+        )
+        .transpose(0, 1, 3, 2, 4, 5)
+        .reshape(batch_count, height, width, channels)
+    )
 
 
-def window_attention(value, *, qkv_weight, attention_scale, attention_bias,
-                     projection_weight, head_count, window_size,
-                     window_origin=(0, 0), logit_cap=None, publish_input=False):
+def window_attention(
+    value,
+    *,
+    qkv_weight,
+    attention_scale,
+    attention_bias,
+    projection_weight,
+    head_count,
+    window_size,
+    window_origin=(0, 0),
+    logit_cap=None,
+    publish_input=False,
+):
     """`publish_input`: the QKV projection reads `value` published - the 32-channel
     blocks', whose feed-forward output is otherwise kept raw for the residual."""
     if len(window_origin) != 2 or any(o > 0 or o <= -window_size for o in window_origin):
@@ -480,8 +543,7 @@ def window_attention(value, *, qkv_weight, attention_scale, attention_bias,
     pad_bottom = (-(value.shape[1] + pad_top)) % window_size
     pad_right = (-(value.shape[2] + pad_left)) % window_size
     if pad_top or pad_left or pad_bottom or pad_right:
-        padded_value = np.pad(value, ((0, 0), (pad_top, pad_bottom),
-                                      (pad_left, pad_right), (0, 0)))
+        padded_value = np.pad(value, ((0, 0), (pad_top, pad_bottom), (pad_left, pad_right), (0, 0)))
     else:
         padded_value = value
 
@@ -490,18 +552,28 @@ def window_attention(value, *, qkv_weight, attention_scale, attention_bias,
         if publish_input:
             windows = e4m3(windows)
         attended = cosine_attention(
-            windows, qkv_weight=qkv_weight, attention_scale=attention_scale,
-            attention_bias=attention_bias, projection_weight=projection_weight,
-            head_count=head_count, logit_cap=logit_cap)
-        return reverse_windows(attended, batch_count=strip.shape[0],
-                               height=strip.shape[1], width=strip.shape[2],
-                               window_size=window_size)
+            windows,
+            qkv_weight=qkv_weight,
+            attention_scale=attention_scale,
+            attention_bias=attention_bias,
+            projection_weight=projection_weight,
+            head_count=head_count,
+            logit_cap=logit_cap,
+        )
+        return reverse_windows(
+            attended,
+            batch_count=strip.shape[0],
+            height=strip.shape[1],
+            width=strip.shape[2],
+            window_size=window_size,
+        )
 
     padded_height, padded_width = padded_value.shape[1], padded_value.shape[2]
     window_rows = padded_height // window_size
     tokens_per_window_row = padded_width * window_size
-    rows_per_strip = (max(1, CHUNK_TOKENS // tokens_per_window_row)
-                      if CHUNK_TOKENS > 0 else window_rows)
+    rows_per_strip = (
+        max(1, CHUNK_TOKENS // tokens_per_window_row) if CHUNK_TOKENS > 0 else window_rows
+    )
     if window_rows <= rows_per_strip:
         attention = attend(padded_value)
     else:
@@ -510,8 +582,7 @@ def window_attention(value, *, qkv_weight, attention_scale, attention_bias,
             y0 = first * window_size
             y1 = min(first + rows_per_strip, window_rows) * window_size
             attention[:, y0:y1] = attend(padded_value[:, y0:y1])
-    return attention[:, pad_top:pad_top + value.shape[1],
-                     pad_left:pad_left + value.shape[2], :]
+    return attention[:, pad_top : pad_top + value.shape[1], pad_left : pad_left + value.shape[2], :]
 
 
 # --------------------------------------------------------------------------
@@ -519,25 +590,46 @@ def window_attention(value, *, qkv_weight, attention_scale, attention_bias,
 # --------------------------------------------------------------------------
 
 
-def window_block(value, *, expansion_weight, feed_forward_projection_weight,
-                 feed_forward_cosine, qkv_weight, attention_scale, attention_bias,
-                 attention_projection_weight, attention_cosine, head_count,
-                 window_size, window_origin=(0, 0)):
+def window_block(
+    value,
+    *,
+    expansion_weight,
+    feed_forward_projection_weight,
+    feed_forward_cosine,
+    qkv_weight,
+    attention_scale,
+    attention_bias,
+    attention_projection_weight,
+    attention_cosine,
+    head_count,
+    window_size,
+    window_origin=(0, 0),
+):
     def feed_forward(tokens):
         # The GEMM reads the input published and the skip takes it as it came: the two
         # differ only for block 0's stem and the merges into blocks 66 and 70.
         branch = matmul(
-            e4m3(quadratic_gate_activation(matmul(
-                tokens if MLX_DLSS_GRAPH else e4m3(tokens), expansion_weight))),
-            feed_forward_projection_weight)
+            e4m3(
+                quadratic_gate_activation(
+                    matmul(tokens if MLX_DLSS_GRAPH else e4m3(tokens), expansion_weight)
+                )
+            ),
+            feed_forward_projection_weight,
+        )
         return cosine_residual(tokens, branch, feed_forward_cosine)
 
     feed_forward_output = _per_token(feed_forward, value)
     attention_branch = window_attention(
-        feed_forward_output, qkv_weight=qkv_weight, attention_scale=attention_scale,
-        attention_bias=attention_bias, projection_weight=attention_projection_weight,
-        head_count=head_count, window_size=window_size, window_origin=window_origin,
-        publish_input=not MLX_DLSS_GRAPH)
+        feed_forward_output,
+        qkv_weight=qkv_weight,
+        attention_scale=attention_scale,
+        attention_bias=attention_bias,
+        projection_weight=attention_projection_weight,
+        head_count=head_count,
+        window_size=window_size,
+        window_origin=window_origin,
+        publish_input=not MLX_DLSS_GRAPH,
+    )
     return _residual_per_token(feed_forward_output, attention_branch, attention_cosine)
 
 
@@ -555,22 +647,26 @@ def _fused_branched_weights(expansion_weight, branch_projection_weight):
     gate and the E4M3 publish between them are elementwise, so they pass through
     the block structure untouched.
     """
-    key = (expansion_weight.ctypes.data, branch_projection_weight.ctypes.data,
-           expansion_weight.shape)
+    key = (
+        expansion_weight.ctypes.data,
+        branch_projection_weight.ctypes.data,
+        expansion_weight.shape,
+    )
     hit = _fused_branched.get(key)
     if hit is None:
         groups = expansion_weight.shape[0]
         expansion = np.ascontiguousarray(
-            expansion_weight.transpose(0, 2, 3, 1, 4).reshape(groups, groups * 32, 4 * 32))
-        projection = np.ascontiguousarray(
-            branch_projection_weight.reshape(groups, 4 * 32, 32))
+            expansion_weight.transpose(0, 2, 3, 1, 4).reshape(groups, groups * 32, 4 * 32)
+        )
+        projection = np.ascontiguousarray(branch_projection_weight.reshape(groups, 4 * 32, 32))
         hit = (expansion_weight, branch_projection_weight, expansion, projection)
         _fused_branched[key] = hit
     return hit[2], hit[3]
 
 
-def branched_feed_forward(value, *, expansion_weight, branch_projection_weight,
-                          output_projection_weight):
+def branched_feed_forward(
+    value, *, expansion_weight, branch_projection_weight, output_projection_weight
+):
     channels = value.shape[-1]
     if channels < 64 or channels % 32:
         raise ValueError("branched feed-forward input must have 32-aligned channels")
@@ -583,11 +679,14 @@ def branched_feed_forward(value, *, expansion_weight, branch_projection_weight,
         raise ValueError("invalid branched output projection weight shape")
 
     if FUSE_BRANCHED:
-        expansion, projection = _fused_branched_weights(expansion_weight,
-                                                        branch_projection_weight)
+        expansion, projection = _fused_branched_weights(expansion_weight, branch_projection_weight)
         output_heads = [
-            e4m3(matmul(e4m3(quadratic_gate_activation(matmul(value, expansion[head]))),
-                        projection[head]))
+            e4m3(
+                matmul(
+                    e4m3(quadratic_gate_activation(matmul(value, expansion[head]))),
+                    projection[head],
+                )
+            )
             for head in range(channel_groups)
         ]
         return matmul(np.concatenate(output_heads, axis=-1), output_projection_weight)
@@ -597,14 +696,18 @@ def branched_feed_forward(value, *, expansion_weight, branch_projection_weight,
     for output_head in range(channel_groups):
         branches = []
         for branch in range(4):
-            expanded = matmul(input_heads[0],
-                              expansion_weight[output_head, branch, 0])
+            expanded = matmul(input_heads[0], expansion_weight[output_head, branch, 0])
             for input_head in range(1, channel_groups):
                 expanded = expanded + matmul(
                     input_heads[input_head],
-                    expansion_weight[output_head, branch, input_head])
-            branches.append(matmul(e4m3(quadratic_gate_activation(expanded)),
-                                   branch_projection_weight[output_head, branch]))
+                    expansion_weight[output_head, branch, input_head],
+                )
+            branches.append(
+                matmul(
+                    e4m3(quadratic_gate_activation(expanded)),
+                    branch_projection_weight[output_head, branch],
+                )
+            )
         total = branches[0]
         for branch in branches[1:]:
             total = total + branch
@@ -612,8 +715,7 @@ def branched_feed_forward(value, *, expansion_weight, branch_projection_weight,
     return matmul(np.concatenate(output_heads, axis=-1), output_projection_weight)
 
 
-def split_group_feed_forward(value, *, first_projection_weight, expand_weight,
-                             project_weight):
+def split_group_feed_forward(value, *, first_projection_weight, expand_weight, project_weight):
     """e4m3(x @ first) then a per-64-channel-group 64 -> 256 -> 64 MLP."""
     channels = value.shape[-1]
     if channels % 64:
@@ -627,52 +729,95 @@ def split_group_feed_forward(value, *, first_projection_weight, expand_weight,
         raise ValueError("invalid split group projection shape")
     hidden = e4m3(matmul(value, first_projection_weight))
     outputs = [
-        matmul(quadratic_gate_activation(matmul(group_hidden, expand_weight[group])),
-               project_weight[group])
+        matmul(
+            quadratic_gate_activation(matmul(group_hidden, expand_weight[group])),
+            project_weight[group],
+        )
         for group, group_hidden in enumerate(np.split(hidden, groups, axis=-1))
     ]
     return e4m3(np.concatenate(outputs, axis=-1))
 
 
-def branched_window_block(value, *, expansion_weight, branch_projection_weight,
-                          output_projection_weight, feed_forward_cosine, qkv_weight,
-                          attention_scale, attention_bias, attention_projection_weight,
-                          attention_cosine, head_count, window_size,
-                          window_origin=(0, 0)):
+def branched_window_block(
+    value,
+    *,
+    expansion_weight,
+    branch_projection_weight,
+    output_projection_weight,
+    feed_forward_cosine,
+    qkv_weight,
+    attention_scale,
+    attention_bias,
+    attention_projection_weight,
+    attention_cosine,
+    head_count,
+    window_size,
+    window_origin=(0, 0),
+):
     def feed_forward(tokens):
         branch = branched_feed_forward(
-            tokens if MLX_DLSS_GRAPH else e4m3(tokens), expansion_weight=expansion_weight,
+            tokens if MLX_DLSS_GRAPH else e4m3(tokens),
+            expansion_weight=expansion_weight,
             branch_projection_weight=branch_projection_weight,
-            output_projection_weight=output_projection_weight)
+            output_projection_weight=output_projection_weight,
+        )
         return e4m3(cosine_residual(tokens, branch, feed_forward_cosine))
 
     feed_forward_output = _per_token(feed_forward, value)
     attention_branch = window_attention(
-        feed_forward_output, qkv_weight=qkv_weight, attention_scale=attention_scale,
-        attention_bias=attention_bias, projection_weight=attention_projection_weight,
-        head_count=head_count, window_size=window_size, window_origin=window_origin)
+        feed_forward_output,
+        qkv_weight=qkv_weight,
+        attention_scale=attention_scale,
+        attention_bias=attention_bias,
+        projection_weight=attention_projection_weight,
+        head_count=head_count,
+        window_size=window_size,
+        window_origin=window_origin,
+    )
     return _residual_per_token(feed_forward_output, attention_branch, attention_cosine)
 
 
-def split_window_block(value, *, first_projection_weight, expand_weight, project_weight,
-                       feed_forward_projection_weight, feed_forward_cosine, qkv_weight,
-                       attention_scale, attention_bias, attention_projection_weight,
-                       attention_cosine, head_count, window_size, window_origin=(0, 0)):
+def split_window_block(
+    value,
+    *,
+    first_projection_weight,
+    expand_weight,
+    project_weight,
+    feed_forward_projection_weight,
+    feed_forward_cosine,
+    qkv_weight,
+    attention_scale,
+    attention_bias,
+    attention_projection_weight,
+    attention_cosine,
+    head_count,
+    window_size,
+    window_origin=(0, 0),
+):
     def feed_forward(tokens):
         branch = matmul(
-            split_group_feed_forward(tokens if MLX_DLSS_GRAPH else e4m3(tokens),
-                                     first_projection_weight=first_projection_weight,
-                                     expand_weight=expand_weight,
-                                     project_weight=project_weight),
-            feed_forward_projection_weight)
+            split_group_feed_forward(
+                tokens if MLX_DLSS_GRAPH else e4m3(tokens),
+                first_projection_weight=first_projection_weight,
+                expand_weight=expand_weight,
+                project_weight=project_weight,
+            ),
+            feed_forward_projection_weight,
+        )
         output = cosine_residual(tokens, branch, feed_forward_cosine)
         return output if MLX_DLSS_GRAPH else e4m3(output)
 
     feed_forward_output = _per_token(feed_forward, value)
     attention_branch = window_attention(
-        feed_forward_output, qkv_weight=qkv_weight, attention_scale=attention_scale,
-        attention_bias=attention_bias, projection_weight=attention_projection_weight,
-        head_count=head_count, window_size=window_size, window_origin=window_origin)
+        feed_forward_output,
+        qkv_weight=qkv_weight,
+        attention_scale=attention_scale,
+        attention_bias=attention_bias,
+        projection_weight=attention_projection_weight,
+        head_count=head_count,
+        window_size=window_size,
+        window_origin=window_origin,
+    )
     return _residual_per_token(feed_forward_output, attention_branch, attention_cosine)
 
 
@@ -693,8 +838,9 @@ def _vit_norm(value):
     squares = _half_rounded(low * low + _half_rounded(high * high))
     eight = _half_rounded(squares[..., :8] + squares[..., 8:])
     four = _half_rounded(eight[..., :4] + eight[..., 4:])
-    total = _half_rounded(_half_rounded(four[..., 0] + four[..., 2])
-                          + _half_rounded(four[..., 1] + four[..., 3]))
+    total = _half_rounded(
+        _half_rounded(four[..., 0] + four[..., 2]) + _half_rounded(four[..., 1] + four[..., 3])
+    )
     total = np.maximum(total, np.float32(np.float16(COSINE_NORM_FLOOR)))
     return _half_rounded(np.float32(1.0) / np.sqrt(total))
 
@@ -702,12 +848,17 @@ def _vit_norm(value):
 def _vit_exp_weight(score):
     """The ViT's exponential: the window blocks' bit trick with its own constants and a
     4-bit shift, `2^(1.4326 s - 3.6502)` over s in about [-3, 3]."""
-    affine = _half_rounded(np.asarray(score, np.float32) * np.float32(0.08953857421875)
-                           + np.float32(1.708984375))
+    affine = _half_rounded(
+        np.asarray(score, np.float32) * np.float32(0.08953857421875) + np.float32(1.708984375)
+    )
     affine = np.clip(affine, np.float32(1.439453125), np.float32(1.9775390625))
     bits = affine.astype(np.float16).view(np.uint16).astype(np.uint32)
-    return (((bits << np.uint32(4)) + np.uint32(0x4000)) & np.uint32(0xFFFF)).astype(
-        np.uint16).view(np.float16).astype(np.float32)
+    return (
+        (((bits << np.uint32(4)) + np.uint32(0x4000)) & np.uint32(0xFFFF))
+        .astype(np.uint16)
+        .view(np.float16)
+        .astype(np.float32)
+    )
 
 
 def _vit_denominator(weights, tokens):
@@ -717,7 +868,7 @@ def _vit_denominator(weights, tokens):
     padded = weights.shape[-1]
     total = np.zeros(weights.shape[:-1], np.float32)
     for base in range(0, padded, 64):
-        block = weights[..., base:base + 64]
+        block = weights[..., base : base + 64]
 
         def column(key):
             a = _half_rounded(block[..., key] + block[..., key + 8])
@@ -751,16 +902,21 @@ def vendor_vit_attention(value, *, qkv_weight, attention_scale, projection_weigh
     query, key, head_value = (x.reshape(shape) for x in (query, key, head_value))
     learned = _half_rounded(np.asarray(attention_scale, np.float32)).reshape(1, 1, head_count, 1)
     root = _half_rounded(np.float32(math.sqrt(32)))
-    query = e4m3(_half_rounded(_half_rounded(
-        _half_rounded(query * _vit_norm(query)[..., None]) * root) * learned))
+    query = e4m3(
+        _half_rounded(
+            _half_rounded(_half_rounded(query * _vit_norm(query)[..., None]) * root) * learned
+        )
+    )
     key = e4m3(_half_rounded(key * _vit_norm(key)[..., None]))
     head_value = e4m3(head_value)
     # (batch, heads, tokens, 32)
-    query, key, head_value = (np.ascontiguousarray(x.transpose(0, 2, 1, 3))
-                              for x in (query, key, head_value))
+    query, key, head_value = (
+        np.ascontiguousarray(x.transpose(0, 2, 1, 3)) for x in (query, key, head_value)
+    )
     attended = vit_attend(query, key, head_value)
     attended = np.ascontiguousarray(attended.transpose(0, 2, 1, 3)).reshape(
-        batch_count, token_count, channels)
+        batch_count, token_count, channels
+    )
     return matmul(attended, projection_weight)
 
 
@@ -780,31 +936,48 @@ def vit_attend(query, key, head_value):
     return e4m3(_half_rounded(summed * reciprocal[..., None]))
 
 
-def global_block(value, *, expansion_weight, feed_forward_projection_weight,
-                 feed_forward_cosine, qkv_weight, attention_scale,
-                 attention_projection_weight, attention_cosine, head_count,
-                 logit_cap=GLOBAL_ATTENTION_LOGIT_CAP):
+def global_block(
+    value,
+    *,
+    expansion_weight,
+    feed_forward_projection_weight,
+    feed_forward_cosine,
+    qkv_weight,
+    attention_scale,
+    attention_projection_weight,
+    attention_cosine,
+    head_count,
+    logit_cap=GLOBAL_ATTENTION_LOGIT_CAP,
+):
     shape = value.shape
     tokens = value.reshape(shape[0], shape[1] * shape[2], shape[3])
     feed_forward_branch = matmul(
         e4m3(quadratic_gate_activation(matmul(tokens, expansion_weight))),
-        feed_forward_projection_weight)
+        feed_forward_projection_weight,
+    )
     feed_forward_output = cosine_residual(tokens, feed_forward_branch, feed_forward_cosine)
     if not MLX_DLSS_GRAPH:
         feed_forward_output = e4m3(feed_forward_output)
         attention_branch = vendor_vit_attention(
-            feed_forward_output, qkv_weight=qkv_weight, attention_scale=attention_scale,
-            projection_weight=attention_projection_weight, head_count=head_count)
+            feed_forward_output,
+            qkv_weight=qkv_weight,
+            attention_scale=attention_scale,
+            projection_weight=attention_projection_weight,
+            head_count=head_count,
+        )
     else:
         attention_branch = cosine_attention(
-            feed_forward_output, qkv_weight=qkv_weight,
-            attention_scale=attention_scale * np.float32(
-                math.sqrt(feed_forward_output.shape[-1] // head_count)),
+            feed_forward_output,
+            qkv_weight=qkv_weight,
+            attention_scale=attention_scale
+            * np.float32(math.sqrt(feed_forward_output.shape[-1] // head_count)),
             attention_bias=None,
-            projection_weight=attention_projection_weight, head_count=head_count,
-            logit_cap=logit_cap, symmetric_logit_cap=True)
-    return cosine_residual(feed_forward_output, attention_branch,
-                           attention_cosine).reshape(shape)
+            projection_weight=attention_projection_weight,
+            head_count=head_count,
+            logit_cap=logit_cap,
+            symmetric_logit_cap=True,
+        )
+    return cosine_residual(feed_forward_output, attention_branch, attention_cosine).reshape(shape)
 
 
 # --------------------------------------------------------------------------
@@ -815,8 +988,12 @@ def global_block(value, *, expansion_weight, feed_forward_projection_weight,
 def average_pool2(value):
     if value.ndim != 4 or value.shape[1] % 2 or value.shape[2] % 2:
         raise ValueError("average pool expects even rank-4 NHWC input")
-    return (value[:, 0::2, 0::2, :] + value[:, 1::2, 0::2, :]
-            + value[:, 0::2, 1::2, :] + value[:, 1::2, 1::2, :]) * np.float32(0.25)
+    return (
+        value[:, 0::2, 0::2, :]
+        + value[:, 1::2, 0::2, :]
+        + value[:, 0::2, 1::2, :]
+        + value[:, 1::2, 1::2, :]
+    ) * np.float32(0.25)
 
 
 def downsample(value, *, weight):
@@ -855,11 +1032,13 @@ def learned_upsample2(value, *, interpolation):
     right = np.concatenate((value[:, :, 1:, :], value[:, :, -1:, :]), axis=2)
     horizontal_midpoint = value * (1 - interpolation) + right * interpolation
     horizontal = np.stack((value, horizontal_midpoint), axis=3).reshape(
-        batch_count, height, width * 2, channels)
+        batch_count, height, width * 2, channels
+    )
     below = np.concatenate((horizontal[:, 1:, :, :], horizontal[:, -1:, :, :]), axis=1)
     vertical_midpoint = horizontal * (1 - interpolation) + below * interpolation
     return np.stack((horizontal, vertical_midpoint), axis=2).reshape(
-        batch_count, height * 2, width * 2, channels)
+        batch_count, height * 2, width * 2, channels
+    )
 
 
 def decoder_input_merge(value, *, skip, skip_sine):
@@ -896,10 +1075,10 @@ def default_weights():
     """`work/mlxw/dlssnr-prepared.safetensors` when it exists, else the logical file
     (nr_build.weights_file; NR_WEIGHTS overrides)."""
     import pathlib
-    import sys
+
     root = pathlib.Path(__file__).resolve().parents[2]
-    sys.path.insert(0, str(root / "src"))
     import nr_build
+
     return nr_build.weights_file(root)
 
 
@@ -927,12 +1106,11 @@ def load_logical(path, keep_half=False):
         if dtype is None:
             raise ValueError(f"{name}: unsupported dtype {entry['dtype']}")
         start, stop = entry["data_offsets"]
-        raw = blob[base + start:base + stop].view(dtype)
+        raw = blob[base + start : base + stop].view(dtype)
         if keep_half:
             weights[name] = raw.reshape(entry["shape"])
         else:
-            weights[name] = np.ascontiguousarray(raw.reshape(entry["shape"]),
-                                                 dtype=np.float32)
+            weights[name] = np.ascontiguousarray(raw.reshape(entry["shape"]), dtype=np.float32)
     return weights, metadata
 
 
@@ -985,37 +1163,44 @@ class NeuralRenderingModel:
     def _window(self, value, index, *, head_count, publish=True):
         prefix = f"block{index}.layer0"
         self.weight(f"{prefix}.attn_bias")
-        attention_bias = globals()["attention_bias"](self.weights, f"{prefix}.attn_bias", index, head_count)
-        common = dict(
-            feed_forward_cosine=self.weight(f"{prefix}.ffn_cos_skip"),
-            qkv_weight=self.weight(f"{prefix}.qkv_weight"),
-            attention_scale=self.weight(f"{prefix}.attn_scale"),
-            attention_bias=attention_bias,
-            attention_projection_weight=self.weight(f"{prefix}.projection_weight"),
-            attention_cosine=self.weight(f"{prefix}.attn_cos_skip"),
-            head_count=head_count, window_size=8,
-            window_origin=recovered_window_origin(index),
+        attention_bias = globals()["attention_bias"](
+            self.weights, f"{prefix}.attn_bias", index, head_count
         )
+        common = {
+            "feed_forward_cosine": self.weight(f"{prefix}.ffn_cos_skip"),
+            "qkv_weight": self.weight(f"{prefix}.qkv_weight"),
+            "attention_scale": self.weight(f"{prefix}.attn_scale"),
+            "attention_bias": attention_bias,
+            "attention_projection_weight": self.weight(f"{prefix}.projection_weight"),
+            "attention_cosine": self.weight(f"{prefix}.attn_cos_skip"),
+            "head_count": head_count,
+            "window_size": 8,
+            "window_origin": recovered_window_origin(index),
+        }
         if f"{prefix}.ffn_expand_weight" in self.weights:
             output = branched_window_block(
                 value,
                 expansion_weight=self.weight(f"{prefix}.ffn_expand_weight"),
                 branch_projection_weight=self.weight(f"{prefix}.ffn_branch_projection_weight"),
                 output_projection_weight=self.weight(f"{prefix}.ffn_output_projection_weight"),
-                **common)
+                **common,
+            )
         else:
             output = window_block(
                 value,
                 expansion_weight=self.weight(f"{prefix}.weight1"),
                 feed_forward_projection_weight=self.weight(f"{prefix}.weight2"),
-                **common)
+                **common,
+            )
         # Block 0 is pooled before its publication and block 70 feeds the head.
         return output if index in (0, 70) or not publish else e4m3(output)
 
     def _split_window(self, value, index, publish=True):
         prefix = f"block{index}"
         self.weight(f"{prefix}.layer2.attn_bias")
-        attention_bias = globals()["attention_bias"](self.weights, f"{prefix}.layer2.attn_bias", index, 16)
+        attention_bias = globals()["attention_bias"](
+            self.weights, f"{prefix}.layer2.attn_bias", index, 16
+        )
         output = split_window_block(
             value,
             first_projection_weight=self.weight(f"{prefix}.layer0.first_projection_weight"),
@@ -1028,22 +1213,27 @@ class NeuralRenderingModel:
             attention_bias=attention_bias,
             attention_projection_weight=self.weight(f"{prefix}.layer3.projection_weight"),
             attention_cosine=self.weight(f"{prefix}.layer3.attn_cos_skip"),
-            head_count=16, window_size=8,
-            window_origin=recovered_window_origin(index))
+            head_count=16,
+            window_size=8,
+            window_origin=recovered_window_origin(index),
+        )
         return e4m3(output) if publish else output
 
     def _global(self, value, index):
         prefix = f"block{index}"
-        return e4m3(global_block(
-            value,
-            expansion_weight=self.weight(f"{prefix}.layer0.weight"),
-            feed_forward_projection_weight=self.weight(f"{prefix}.layer1.weight"),
-            feed_forward_cosine=self.weight(f"{prefix}.layer1.ffn_cos_skip"),
-            qkv_weight=self.weight(f"{prefix}.layer2.qkv_weight"),
-            attention_scale=self.weight(f"{prefix}.layer2.attn_scale"),
-            attention_projection_weight=self.weight(f"{prefix}.layer4.projection_weight"),
-            attention_cosine=self.weight(f"{prefix}.layer4.attn_cos_skip"),
-            head_count=32))
+        return e4m3(
+            global_block(
+                value,
+                expansion_weight=self.weight(f"{prefix}.layer0.weight"),
+                feed_forward_projection_weight=self.weight(f"{prefix}.layer1.weight"),
+                feed_forward_cosine=self.weight(f"{prefix}.layer1.ffn_cos_skip"),
+                qkv_weight=self.weight(f"{prefix}.layer2.qkv_weight"),
+                attention_scale=self.weight(f"{prefix}.layer2.attn_scale"),
+                attention_projection_weight=self.weight(f"{prefix}.layer4.projection_weight"),
+                attention_cosine=self.weight(f"{prefix}.layer4.attn_cos_skip"),
+                head_count=32,
+            )
+        )
 
     def _downsample_window(self, value, index, *, head_count):
         """A transition block: its own output published - the skip the decoder merges at
@@ -1052,15 +1242,18 @@ class NeuralRenderingModel:
         skip = e4m3(transformed)
         if index == 22:
             transformed = pad_spatial_end(transformed, 8)
-        return skip, e4m3(matmul(e4m3(average_pool2(transformed)),
-                                 self.weight(f"block{index}.layer0.weight0")))
+        return skip, e4m3(
+            matmul(
+                e4m3(average_pool2(transformed)),
+                self.weight(f"block{index}.layer0.weight0"),
+            )
+        )
 
     def _upsample_window(self, value, skip, index, *, head_count):
         prefix = f"block{index}.layer0"
         projected = matmul(value, self.weight(f"{prefix}.weight0"))
         skip_path = skip * self.weight(f"{prefix}.sin")
-        upsampled = nearest_upsample2_crop(projected, height=skip.shape[1],
-                                           width=skip.shape[2])
+        upsampled = nearest_upsample2_crop(projected, height=skip.shape[1], width=skip.shape[2])
         merged = upsampled + skip_path
         # The 32-channel block takes the merge raw - its feed-forward publishes it for the
         # GEMM and keeps it raw as the skip - and the branched ones published, as both.
@@ -1089,9 +1282,12 @@ class NeuralRenderingModel:
         # graph took the block before it. Run on OpenDLSS-NR's inputs, our first decoder
         # blocks agree with it 18-25 % with that skip and 61-69 % with this one.
         skips = []
-        for regular, transition, head_count in ((range(1, 4), 4, 1), (range(5, 8), 8, 2),
-                                                (range(9, 14), 14, 4),
-                                                (range(15, 22), 22, 8)):
+        for regular, transition, head_count in (
+            (range(1, 4), 4, 1),
+            (range(5, 8), 8, 2),
+            (range(9, 14), 14, 4),
+            (range(15, 22), 22, 8),
+        ):
             for index in regular:
                 value = self._window(value, index, head_count=head_count)
                 step(f"block{index}")
@@ -1105,14 +1301,17 @@ class NeuralRenderingModel:
             step(f"block{index}")
         if MLX_DLSS_GRAPH:
             split_skip = value = self._split_window(value, 30)
-            value = downsample(pad_spatial_end(value, 8),
-                               weight=self.weight("block30.layer4.weight"))
+            value = downsample(
+                pad_spatial_end(value, 8), weight=self.weight("block30.layer4.weight")
+            )
         else:
             # the bottleneck pools block 30's raw output, and publishes it for its GEMM
             raw = self._split_window(value, 30, publish=False)
             split_skip = e4m3(raw)
-            value = matmul(e4m3(average_pool2(pad_spatial_end(raw, 8))),
-                           self.weight("block30.layer4.weight"))
+            value = matmul(
+                e4m3(average_pool2(pad_spatial_end(raw, 8))),
+                self.weight("block30.layer4.weight"),
+            )
             del raw
         step("block30")
         value = e4m3(value)
@@ -1123,7 +1322,9 @@ class NeuralRenderingModel:
 
         value = decoder_input_merge(
             matmul(value, self.weight("block39.layer0.conv_weight")),
-            skip=split_skip, skip_sine=self.weight("block39.layer0.inp_upsample_sin"))
+            skip=split_skip,
+            skip_sine=self.weight("block39.layer0.inp_upsample_sin"),
+        )
         value = e4m3(value)
         step("block39")
         for index in range(40, 48):
@@ -1136,29 +1337,38 @@ class NeuralRenderingModel:
             step(f"block{index}")
 
         for transition, regular, skip_index, head_count in (
-                (56, range(57, 62), 2, 4),
-                (62, range(63, 66), 1, 2),
-                (66, range(67, 70), 0, 1)):
-            value = self._upsample_window(value, skips[skip_index], transition,
-                                          head_count=head_count)
+            (56, range(57, 62), 2, 4),
+            (62, range(63, 66), 1, 2),
+            (66, range(67, 70), 0, 1),
+        ):
+            value = self._upsample_window(
+                value, skips[skip_index], transition, head_count=head_count
+            )
             step(f"block{transition}")
             for index in regular:
                 value = self._window(value, index, head_count=head_count)
                 step(f"block{index}")
 
-        value = nearest_upsample2_crop(value, height=full_resolution_skip.shape[1],
-                                       width=full_resolution_skip.shape[2])
+        value = nearest_upsample2_crop(
+            value,
+            height=full_resolution_skip.shape[1],
+            width=full_resolution_skip.shape[2],
+        )
         merge_sin = self.weight("block70.layer0.inp_merge_sin")
         merge_cos = self.weight("block70.layer0.inp_merge_cos")
-        value = _rows(lambda up, skip: up * merge_sin + skip * merge_cos,
-                      value, full_resolution_skip)
+        value = _rows(
+            lambda up, skip: up * merge_sin + skip * merge_cos,
+            value,
+            full_resolution_skip,
+        )
         del full_resolution_skip
         value = self._window(value, 70, head_count=1)
         step("block70")
         out_gain = self.weight("block70.layer0.out_gain")
         out_conv = self.weight("block70.layer0.out_conv_weight")
         return _per_token(
-            lambda tokens: matmul(tokens[..., :16], out_gain)
-            + matmul(tokens[..., 16:], out_conv), value)
+            lambda tokens: matmul(tokens[..., :16], out_gain) + matmul(tokens[..., 16:], out_conv),
+            value,
+        )
 
     __call__ = forward

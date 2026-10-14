@@ -14,6 +14,7 @@ does not round between the groups at all (notes/opendlss-reference.md).
 
 Slow - an (m, 16, n) array a group - and meant for measurements, not frames.
 """
+
 import numpy as np
 
 
@@ -37,20 +38,24 @@ def fp8_gemm(a, b, seed=None, partition=0, rows=4096):
     out = np.empty((m, n), np.float64)
     width = partition or k
     for r0 in range(0, m, rows):
-        ra, rea = a[r0:r0 + rows], ea[r0:r0 + rows]
+        ra, rea = a[r0 : r0 + rows], ea[r0 : r0 + rows]
         total = None
         for p0 in range(0, k, width):
-            acc = (half(seed[r0:r0 + rows]) if seed is not None and p0 == 0
-                   else np.zeros((ra.shape[0], n)))
+            acc = (
+                half(seed[r0 : r0 + rows])
+                if seed is not None and p0 == 0
+                else np.zeros((ra.shape[0], n))
+            )
             for g in range(p0, min(p0 + width, k), 16):
-                pairs = rea[:, g:g + 16, None] + eb[None, g:g + 16, :]
+                pairs = rea[:, g : g + 16, None] + eb[None, g : g + 16, :]
                 start = np.where(acc != 0, _exponent(acc, -14), -21)
                 shared = np.maximum(start, pairs.max(axis=1))
                 scale = np.ldexp(1.0, 13 - shared)
                 units = np.trunc(acc * scale)
-                units += np.trunc(ra[:, g:g + 16, None] * b[None, g:g + 16, :]
-                                  * scale[:, None, :]).sum(axis=1)
+                units += np.trunc(
+                    ra[:, g : g + 16, None] * b[None, g : g + 16, :] * scale[:, None, :]
+                ).sum(axis=1)
                 acc = half(units * np.ldexp(1.0, shared - 13))
             total = acc if total is None else half(total + acc)
-        out[r0:r0 + rows] = total
+        out[r0 : r0 + rows] = total
     return out

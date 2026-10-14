@@ -3,15 +3,19 @@
 
 Usage: int_render.py BITS IN OUT   (BITS 0 leaves the weights alone)
 """
-import pathlib, runpy, sys
+
+import pathlib
+import runpy
+import sys
+
 import numpy as np
+from int_weights import quantise
+from xmxrt.recorder import Recorder
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src" / "gpu")); sys.path.insert(0, str(ROOT / "src" / "ref"))
-import xmxres
-from int_weights import quantise  # noqa: E402  (import order: xmxres must resolve first)
 
 BITS = int(sys.argv[1])
-real = xmxres.Runtime.buffer_from
+real = Recorder.buffer_from
 
 
 def hooked(self, array, dtype=np.float32, pad=0):
@@ -20,6 +24,6 @@ def hooked(self, array, dtype=np.float32, pad=0):
     return real(self, array, dtype, pad)
 
 
-xmxres.Runtime.buffer_from = hooked
+Recorder.buffer_from = hooked
 sys.argv = ["nr_frame.py", sys.argv[2], sys.argv[3], "--resident"]
 runpy.run_path(str(ROOT / "src" / "ref" / "nr_frame.py"), run_name="__main__")

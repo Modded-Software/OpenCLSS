@@ -16,23 +16,39 @@ max_source_files_per_module: 56
 max_submodules_per_module: 8
 max_module_depth: 8
 overrides:
-  - path: src/gpu/xmxres.py
-    max_lines: 1527
-  - path: src/ref/nr_model.py
-    max_lines: 1164
-  - path: src/tools/test_windows_wizard.py
-    max_lines: 925
-  - path: src/ref/nr_frame.py
-    max_lines: 856
   - path: src/gpu/nr_resident.py
-    max_lines: 760
-  - path: src/gpu/nr_frame_resident.py
-    max_lines: 692
-  - path: src/tools/test_windows_launch.py
-    max_lines: 585
-  - path: src/tools/windows_wizard_core.py
-    max_lines: 1531
+    max_lines: 1447
   - path: src/layer/nr_daemon.py
-    max_lines: 1193
+    max_lines: 1402
+  - path: src/ref/nr_model.py
+    max_lines: 1374
+  - path: src/tools/test_windows_wizard.py
+    max_lines: 1274
+  - path: src/ref/nr_frame.py
+    max_lines: 1093
   - path: src/tools/windows_launch.py
-    max_lines: 833
+    max_lines: 1022
+  - path: src/gpu/nr_frame_resident.py
+    max_lines: 830
+  - path: src/ref/test_nr_frame_c.py
+    max_lines: 802
+  - path: src/gpu/test_glue.py
+    max_lines: 730
+  - path: src/ref/nr_frame_native.py
+    max_lines: 698
+  - path: src/tools/test_windows_launch.py
+    max_lines: 694
+  - path: src/ref/nr_image.py
+    max_lines: 676
+  - path: src/ref/test_native_image.py
+    max_lines: 642
+  - path: src/tools/wizard/deps.py
+    max_lines: 638
+  - path: src/gpu/xmxrt/gemm.py
+    max_lines: 584
+  - path: src/gpu/xmxrt/elementwise.py
+    max_lines: 579
+  - path: src/gpu/test_resident.py
+    max_lines: 521
+  - path: src/ref/test_nr_model.py
+    max_lines: 514

@@ -11,13 +11,17 @@ Only the GEMM operands are touched. The gates, `attn_scale`, the attention bias 
 transition sines are uploaded as float32 and are left alone - they are a few thousand
 values and structural.
 """
-import pathlib, sys
-import numpy as np
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src" / "gpu")); sys.path.insert(0, str(ROOT / "src" / "ref"))
-import xmxres, nr_model, nr_frame_resident as F
 
-real_buffer_from = xmxres.Runtime.buffer_from
+import pathlib
+
+import numpy as np
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+import nr_frame_resident as F
+import nr_model
+from xmxrt.recorder import Recorder
+
+real_buffer_from = Recorder.buffer_from
 STATE = {"bits": 0, "per_row": True, "error": [], "count": 0}
 
 
@@ -45,13 +49,14 @@ def hooked(self, array, dtype=np.float32, pad=0):
 
 
 if __name__ == "__main__":
-    xmxres.Runtime.buffer_from = hooked
+    Recorder.buffer_from = hooked
 
-    model = nr_model.NeuralRenderingModel.from_safetensors(ROOT / "work" / "mlxw" / "dlssnr-logical.safetensors")
-    rt = xmxres.Runtime()
+    model = nr_model.NeuralRenderingModel.from_safetensors(
+        ROOT / "work" / "mlxw" / "dlssnr-logical.safetensors"
+    )
+    rt = Recorder()
     H, W = 384, 384
     features = (np.random.default_rng(11).standard_normal((H, W, 16)) * 0.3).astype(np.float32)
-
 
     def run(bits, per_row):
         STATE.update(bits=bits, per_row=per_row, error=[], count=0)
@@ -60,17 +65,28 @@ if __name__ == "__main__":
         err = float(np.mean(STATE["error"])) if STATE["error"] else 0.0
         return head, err, STATE["count"]
 
-
     base, _, _ = run(0, True)
     print("  baseline: %d GEMM weights in float16, head sd %.4f\n" % (0, base.std()))
-    print("  %-22s %10s %12s %12s %12s"
-          % ("weights", "rel error", "corr vs fp16", "head sd", "max |d|"))
+    print(
+        "  %-22s %10s %12s %12s %12s"
+        % ("weights", "rel error", "corr vs fp16", "head sd", "max |d|")
+    )
     for bits, per_row in ((8, True), (8, False), (6, True), (5, True), (4, True)):
         head, err, count = run(bits, per_row)
         a, b = base.reshape(-1), head.reshape(-1)
         corr = float(np.corrcoef(a, b)[0, 1])
-        print("  int%-2d %-17s %10.2e %12.6f %12.4f %12.4f"
-              % (bits, "per output channel" if per_row else "per tensor", err, corr,
-                 head.std(), np.abs(head - base).max()))
-    print("\n  %d GEMM weight matrices quantised; gates, attn_scale, the attention bias and"
-          "\n  the transition sines stay float32." % count)
+        print(
+            "  int%-2d %-17s %10.2e %12.6f %12.4f %12.4f"
+            % (
+                bits,
+                "per output channel" if per_row else "per tensor",
+                err,
+                corr,
+                head.std(),
+                np.abs(head - base).max(),
+            )
+        )
+    print(
+        "\n  %d GEMM weight matrices quantised; gates, attn_scale, the attention bias and"
+        "\n  the transition sines stay float32." % count
+    )

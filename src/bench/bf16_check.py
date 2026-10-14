@@ -6,11 +6,16 @@ softmax's affine map, the cosine tree - so its activations *are* float16 values 
 construction. bfloat16 is the same two bytes but keeps 7 explicit mantissa bits
 against float16's 10, so it cannot hold them.
 """
-import pathlib, sys
+
+import pathlib
+
 import numpy as np
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src" / "gpu")); sys.path.insert(0, str(ROOT / "src" / "ref"))
-import xmxres, nr_model, nr_frame_resident as F
+import nr_frame_resident as F
+import nr_model
+from xmxrt.recorder import Recorder
+
 
 def to_bf16(x):
     """Round float32 to bfloat16 and back, round-half-even at bit 16."""
@@ -18,8 +23,11 @@ def to_bf16(x):
     bits = (bits + 0x7FFF + ((bits >> 16) & 1)) & 0xFFFF0000
     return bits.view(np.float32)
 
-model = nr_model.NeuralRenderingModel.from_safetensors(ROOT / "work" / "mlxw" / "dlssnr-logical.safetensors")
-rt = xmxres.Runtime()
+
+model = nr_model.NeuralRenderingModel.from_safetensors(
+    ROOT / "work" / "mlxw" / "dlssnr-logical.safetensors"
+)
+rt = Recorder()
 frame = F.ResidentFrame(rt, model.weights, 384, 384)
 rng = np.random.default_rng(5)
 capture = {}
@@ -36,6 +44,13 @@ for name, data in list(capture.items())[:8]:
     print("  %-14s %10d %13.2f%% %13.2f%%" % (name, v.size, 100 * fp16, 100 * bf16))
 
 v = np.asarray(head, np.float32).reshape(-1)
-print("  %-14s %10d %13.2f%% %13.2f%%" % ("head", v.size,
-      100 * (v == v.astype(np.float16).astype(np.float32)).mean(), 100 * (v == to_bf16(v)).mean()))
+print(
+    "  %-14s %10d %13.2f%% %13.2f%%"
+    % (
+        "head",
+        v.size,
+        100 * (v == v.astype(np.float16).astype(np.float32)).mean(),
+        100 * (v == to_bf16(v)).mean(),
+    )
+)
 print("\n  Both formats are two bytes, so bfloat16 saves no traffic that float16 does not.")

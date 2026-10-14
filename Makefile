@@ -566,15 +566,16 @@ sync: install-deps ## Sync deps (hooks install separately, root-only: sudo make 
 
 
 check: lint type-check test ## Run all quality gates
-	echo "TODO: wire lint+type-check+test implementations."
+	:
 
 
 lint: ## Lint
-	:
+	uv run --extra dev ruff format --check .
+	uv run --extra dev ruff check .
 
 
 type-check: ## Type-check
-	:
+	uv run --extra dev mypy .
 
 
 check-push: ## Pre-push quality gate

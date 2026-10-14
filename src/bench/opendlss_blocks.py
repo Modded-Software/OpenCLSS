@@ -16,19 +16,14 @@ tried against the reference's output.
 
     work/venv/bin/python src/bench/opendlss_blocks.py [--size 320x180] [--image IMAGE]
 """
+
 import argparse
-import pathlib
-import sys
 
+import image_io
+import nr_frame
+import nr_model as M
 import numpy as np
-
-HERE = pathlib.Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
-import opendlss_reference as reference   # noqa: E402
-
-import image_io                            # noqa: E402
-import nr_frame                            # noqa: E402
-import nr_model as M                       # noqa: E402
+import opendlss_reference as reference
 
 
 def their_levels(width, height):
@@ -60,11 +55,14 @@ def main():
         raise SystemExit(f"{args.size}: our field is not the reference's {field}")
 
     import nr_daemon
+
     colour = nr_daemon.resample(np.asarray(image_io.load(args.image), np.float32), (height, width))
     features = nr_frame.build_features(colour, geometry=geometry, **nr_frame.PROFILES["standard"])
-    head, result, bounds = reference.reference_run(features, width, height, capture=True)
-    print(f"{args.size} on a {field[0]}x{field[1]} field; reference on {result['adapter']}, "
-          f"{len(bounds)} boundaries")
+    _head, result, bounds = reference.reference_run(features, width, height, capture=True)
+    print(
+        f"{args.size} on a {field[0]}x{field[1]} field; reference on {result['adapter']}, "
+        f"{len(bounds)} boundaries"
+    )
 
     def boundary(name, shape):
         values = bounds[name]
@@ -76,65 +74,99 @@ def main():
     def check(name, ours, theirs):
         equal, relative = compare(M.e4m3(ours), theirs)
         report.append((name, equal, relative))
-        print(f"  {name:34s} {100 * equal:6.2f} % equal   mean |d| {100 * relative:6.2f} % of the value",
-              flush=True)
+        print(
+            f"  {name:34s} {100 * equal:6.2f} % equal   mean |d| {100 * relative:6.2f} % of the value",
+            flush=True,
+        )
 
     full = (field[1], field[0])
     level = [(h, w) for h, w in levels]
     # block 0, from the features
     adapter = model.weight("block0.layer0.input_adapter_weight")
-    value = M._per_token(lambda tokens: M.matmul(tokens, adapter), features[None].astype(np.float32))
+    value = M._per_token(
+        lambda tokens: M.matmul(tokens, adapter), features[None].astype(np.float32)
+    )
     block0 = model._window(value, 0, head_count=1)
     check("block 0 (from the features)", block0, boundary("block-0", full))
 
     # the encoder: 32 channels at level 0, then 64, 128, 256
-    stages = [(0, range(1, 5), 1, "transition-0-1"), (1, range(5, 9), 2, "transition-4-5"),
-              (2, range(9, 15), 4, "transition-8-9"), (3, range(15, 23), 8, "transition-14-15")]
+    stages = [
+        (0, range(1, 5), 1, "transition-0-1"),
+        (1, range(5, 9), 2, "transition-4-5"),
+        (2, range(9, 15), 4, "transition-8-9"),
+        (3, range(15, 23), 8, "transition-14-15"),
+    ]
     for index, blocks, heads, entry in stages:
         shape = level[index]
         previous = entry
         for block in blocks:
             source = boundary(previous, shape)
-            check(f"block {block} ({heads} head{'s' if heads > 1 else ''})",
-                  model._window(source, block, head_count=heads), boundary(f"block-{block}", shape))
+            check(
+                f"block {block} ({heads} head{'s' if heads > 1 else ''})",
+                model._window(source, block, head_count=heads),
+                boundary(f"block-{block}", shape),
+            )
             previous = f"block-{block}"
 
     # the 512 stage, the ViT and the decoder's input merge
     shape = level[4]
     previous = "transition-22-23"
     for block in range(23, 31):
-        check(f"block {block} (512, split)", model._split_window(boundary(previous, shape), block),
-              boundary(f"block-{block}", shape))
+        check(
+            f"block {block} (512, split)",
+            model._split_window(boundary(previous, shape), block),
+            boundary(f"block-{block}", shape),
+        )
         previous = f"block-{block}"
     tokens = level[5]
     for block in range(32, 39):
-        check(f"block {block} (ViT)", model._global(boundary(f"block-{block - 1}", tokens), block),
-              boundary(f"block-{block}", tokens))
+        check(
+            f"block {block} (ViT)",
+            model._global(boundary(f"block-{block - 1}", tokens), block),
+            boundary(f"block-{block}", tokens),
+        )
     merged = M.decoder_input_merge(
         M.matmul(boundary("block-38", tokens), model.weight("block39.layer0.conv_weight")),
-        skip=boundary("block-30", shape), skip_sine=model.weight("block39.layer0.inp_upsample_sin"))
+        skip=boundary("block-30", shape),
+        skip_sine=model.weight("block39.layer0.inp_upsample_sin"),
+    )
     check("block 39 (decoder input merge)", merged, boundary("block-39", shape))
     previous = "block-39"
     for block in range(40, 48):
-        check(f"block {block} (512, split)", model._split_window(boundary(previous, shape), block),
-              boundary(f"block-{block}", shape))
+        check(
+            f"block {block} (512, split)",
+            model._split_window(boundary(previous, shape), block),
+            boundary(f"block-{block}", shape),
+        )
         previous = f"block-{block}"
 
     # the decoder: each stage's first block merges the level below with an encoder skip
-    stages = [(3, 48, range(49, 56), 8, (21, 22)), (2, 56, range(57, 62), 4, (13, 14)),
-              (1, 62, range(63, 66), 2, (7, 8)), (0, 66, range(67, 70), 1, (3, 4))]
+    stages = [
+        (3, 48, range(49, 56), 8, (21, 22)),
+        (2, 56, range(57, 62), 4, (13, 14)),
+        (1, 62, range(63, 66), 2, (7, 8)),
+        (0, 66, range(67, 70), 1, (3, 4)),
+    ]
     below = "block-47"
     for index, first, blocks, heads, skips in stages:
         shape = level[index]
         low = boundary(below, level[index + 1] if index < 4 else level[4])
         for skip in skips:
-            ours = model._upsample_window(low, boundary(f"block-{skip}", shape), first, head_count=heads)
-            check(f"block {first} (skip = block {skip})", ours, boundary(f"block-{first}", shape))
+            ours = model._upsample_window(
+                low, boundary(f"block-{skip}", shape), first, head_count=heads
+            )
+            check(
+                f"block {first} (skip = block {skip})",
+                ours,
+                boundary(f"block-{first}", shape),
+            )
         previous = f"block-{first}"
         for block in blocks:
-            check(f"block {block} ({heads} head{'s' if heads > 1 else ''})",
-                  model._window(boundary(previous, shape), block, head_count=heads),
-                  boundary(f"block-{block}", shape))
+            check(
+                f"block {block} ({heads} head{'s' if heads > 1 else ''})",
+                model._window(boundary(previous, shape), block, head_count=heads),
+                boundary(f"block-{block}", shape),
+            )
             previous = f"block-{block}"
         below = previous
 

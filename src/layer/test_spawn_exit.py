@@ -13,6 +13,7 @@ Checks:
 
 Exits 77, skipped, off Windows.
 """
+
 import gc
 import os
 import pathlib
@@ -24,12 +25,17 @@ HERE = pathlib.Path(__file__).resolve().parent
 FAILURES = []
 # The daemon's module, imported as the daemon's own main() would have it; prints 'watching'
 # once end_with_game has returned, and exits 3 if nothing ended it within a minute.
-WATCH = ("import sys, time; sys.path.insert(0, {here!r}); import nr_daemon; "
-         "nr_daemon.end_with_game(); print('watching', flush=True); time.sleep(60); sys.exit(3)")
+WATCH = (
+    "import sys, time; sys.path.insert(0, {here!r}); import nr_daemon; "
+    "nr_daemon.end_with_game(); print('watching', flush=True); time.sleep(60); sys.exit(3)"
+)
 
 
 def check(name, ok, detail=""):
-    print(f"  [{'ok  ' if ok else 'FAIL'}] {name}{'  ' + detail if detail else ''}", flush=True)
+    print(
+        f"  [{'ok  ' if ok else 'FAIL'}] {name}{'  ' + detail if detail else ''}",
+        flush=True,
+    )
     if not ok:
         FAILURES.append(name)
 
@@ -44,9 +50,13 @@ def daemon(marker):
     if marker is not None:
         environment["NR_LAYER_SPAWNED"] = str(marker)
     sys.stderr.write(f"[test_spawn_exit] starting the watch daemon (marker {marker})\n")
-    return subprocess.Popen([sys.executable, "-c", WATCH.format(here=str(HERE))],
-                            env=environment, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True)
+    return subprocess.Popen(
+        [sys.executable, "-c", WATCH.format(here=str(HERE))],
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
 
 
 def first_line(process):
@@ -70,8 +80,11 @@ def main():
     stand_in = game()
     watcher = daemon(stand_in.pid)
     lines = [first_line(watcher), first_line(watcher)]
-    check("it says what it ends with", lines[0] == f"ends with the game that started it "
-          f"(process {stand_in.pid})", lines[0])
+    check(
+        "it says what it ends with",
+        lines[0] == f"ends with the game that started it (process {stand_in.pid})",
+        lines[0],
+    )
     check("and returns to the daemon's start", lines[1] == "watching", lines[1])
     time.sleep(1.5)
     check("while the game runs, the daemon runs", watcher.poll() is None)
@@ -79,11 +92,17 @@ def main():
     stand_in.wait()
     gone = time.perf_counter()
     code = ended(watcher, 10)
-    check("when the game exits, the daemon exits", code == 0,
-          f"exit {code} after {time.perf_counter() - gone:.2f} s")
+    check(
+        "when the game exits, the daemon exits",
+        code == 0,
+        f"exit {code} after {time.perf_counter() - gone:.2f} s",
+    )
     rest = watcher.stdout.read().strip() if code is not None else ""
-    check("and says why", rest == f"the game that started this daemon (process "
-          f"{stand_in.pid}) has exited; stopping", rest)
+    check(
+        "and says why",
+        rest == f"the game that started this daemon (process {stand_in.pid}) has exited; stopping",
+        rest,
+    )
     if code is None:
         watcher.kill()
 
@@ -98,19 +117,30 @@ def main():
     watcher = daemon(pid)
     code = ended(watcher, 30)
     out = watcher.stdout.read().strip() if code is not None else ""
-    check("the daemon ends at once", code == 0 and out == f"the game that started this daemon "
-          f"(process {pid}) has already exited; stopping", f"exit {code}: {out}")
+    check(
+        "the daemon ends at once",
+        code == 0
+        and out
+        == f"the game that started this daemon (process {pid}) has already exited; stopping",
+        f"exit {code}: {out}",
+    )
     if code is None:
         watcher.kill()
 
-    for name, marker in (("no id: a daemon started by hand", None), ("Linux's marker 1", 1),
-                         ("not a number", "yes")):
+    for name, marker in (
+        ("no id: a daemon started by hand", None),
+        ("Linux's marker 1", 1),
+        ("not a number", "yes"),
+    ):
         print(f"{name}:")
         watcher = daemon(marker)
         line = first_line(watcher)
         time.sleep(1.5)
-        check("nothing is watched, and the daemon runs", line == "watching" and watcher.poll() is None,
-              line)
+        check(
+            "nothing is watched, and the daemon runs",
+            line == "watching" and watcher.poll() is None,
+            line,
+        )
         watcher.kill()
         watcher.wait()
 

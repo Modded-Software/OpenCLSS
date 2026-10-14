@@ -26,6 +26,7 @@ byte for byte.
 
     python3 src/bench/restill.py work/tekken work/restill/tekken --native
 """
+
 import argparse
 import json
 import pathlib
@@ -41,9 +42,8 @@ import time
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src" / "ref"))
-sys.path.insert(0, str(ROOT / "src"))
 import image_io
+
 import nr_build
 
 MAGIC = 0x304E524E
@@ -69,32 +69,75 @@ def stitch(out, fps):
         return
     seconds = len(outs) / fps
     rendered = out / "rendered.mp4"
-    subprocess.run([exe, "-y", "-loglevel", "error", "-framerate", str(fps),
-                    "-i", str(out / "%03d_out.png"), "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                    "-crf", "16", str(rendered)], check=True)
+    subprocess.run(
+        [
+            exe,
+            "-y",
+            "-loglevel",
+            "error",
+            "-framerate",
+            str(fps),
+            "-i",
+            str(out / "%03d_out.png"),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-crf",
+            "16",
+            str(rendered),
+        ],
+        check=True,
+    )
     print(f"  {len(outs)} frames, {seconds:.1f}s -> {rendered}", flush=True)
     if list(out.glob("*_in.png")):
         compare = out / "compare.mp4"
-        subprocess.run([exe, "-y", "-loglevel", "error", "-framerate", str(fps),
-                        "-i", str(out / "%03d_in.png"), "-framerate", str(fps),
-                        "-i", str(out / "%03d_out.png"),
-                        "-filter_complex", "[0:v][1:v]hstack=inputs=2[v]",
-                        "-map", "[v]", "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                        "-crf", "16", str(compare)], check=True)
+        subprocess.run(
+            [
+                exe,
+                "-y",
+                "-loglevel",
+                "error",
+                "-framerate",
+                str(fps),
+                "-i",
+                str(out / "%03d_in.png"),
+                "-framerate",
+                str(fps),
+                "-i",
+                str(out / "%03d_out.png"),
+                "-filter_complex",
+                "[0:v][1:v]hstack=inputs=2[v]",
+                "-map",
+                "[v]",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-crf",
+                "16",
+                str(compare),
+            ],
+            check=True,
+        )
         print(f"  input | rendered side by side -> {compare}", flush=True)
 
 
 def frames_of(directory):
     # numbered as the daemon numbers them; anything else in the folder is somebody's own
-    frames = sorted((path for path in directory.glob("*_in.png") if path.stem.split("_")[0].isdigit()),
-                    key=lambda path: int(path.stem.split("_")[0]))
+    frames = sorted(
+        (path for path in directory.glob("*_in.png") if path.stem.split("_")[0].isdigit()),
+        key=lambda path: int(path.stem.split("_")[0]),
+    )
     numbers = [int(path.stem.split("_")[0]) for path in frames]
     if not frames:
         raise SystemExit(f"no NNN_in.png in {directory}")
     if numbers != list(range(numbers[0], numbers[0] + len(numbers))):
         # a gap means frames the daemon saw and this replay would not: its history differs
-        raise SystemExit(f"{directory}: the frames are not consecutive ({numbers[0]}-{numbers[-1]}, "
-                         f"{len(numbers)} of them)")
+        raise SystemExit(
+            f"{directory}: the frames are not consecutive ({numbers[0]}-{numbers[-1]}, "
+            f"{len(numbers)} of them)"
+        )
     return frames
 
 
@@ -122,18 +165,32 @@ def exchange(path, width, height, payload):
 
 
 # the daemon's settings file names, as `nr_frame --replay` spells them
-NATIVE_FLAGS = {"render_scale": "--render-scale", "profile": "--profile", "intensity": "--intensity",
-                "detail_strength": "--detail-strength", "colour_strength": "--colour-strength",
-                "temporal": "--temporal", "hold": "--hold", "release": "--release",
-                "cut_limit": "--cut-limit", "min_extent": "--min-extent"}
+NATIVE_FLAGS = {
+    "render_scale": "--render-scale",
+    "profile": "--profile",
+    "intensity": "--intensity",
+    "detail_strength": "--detail-strength",
+    "colour_strength": "--colour-strength",
+    "temporal": "--temporal",
+    "hold": "--hold",
+    "release": "--release",
+    "cut_limit": "--cut-limit",
+    "min_extent": "--min-extent",
+}
 
 
 def git_revision():
     """The commit this run came from, for provenance. Surfaces git's own words if it cannot say."""
-    done = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
-                          capture_output=True, text=True)
+    done = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
     if done.returncode != 0:
-        print(f"  git rev-parse failed ({done.returncode}): {done.stderr.strip()}", flush=True)
+        print(
+            f"  git rev-parse failed ({done.returncode}): {done.stderr.strip()}",
+            flush=True,
+        )
         return "unknown"
     revision = done.stdout.strip()
     if not revision:
@@ -156,8 +213,13 @@ def frame_times(log_text):
 def statistics_of(times, summary):
     if summary:
         values = {}
-        for token, key in (("mean", "mean_ms"), ("median", "median_ms"),
-                           ("min", "min_ms"), ("p95", "p95_ms"), ("max", "max_ms")):
+        for _token, key in (
+            ("mean", "mean_ms"),
+            ("median", "median_ms"),
+            ("min", "min_ms"),
+            ("p95", "p95_ms"),
+            ("max", "max_ms"),
+        ):
             found = re.search(rf"{key.split('_')[0]} (\d+\.\d+)", summary)
             if found:
                 values[key] = float(found.group(1))
@@ -167,8 +229,13 @@ def statistics_of(times, summary):
     ordered = sorted(times)
     n = len(ordered)
     median = ordered[n // 2] if n % 2 else 0.5 * (ordered[n // 2 - 1] + ordered[n // 2])
-    return {"mean_ms": sum(ordered) / n, "median_ms": median, "min_ms": ordered[0],
-            "p95_ms": ordered[int(0.95 * (n - 1))], "max_ms": ordered[-1]}
+    return {
+        "mean_ms": sum(ordered) / n,
+        "median_ms": median,
+        "min_ms": ordered[0],
+        "p95_ms": ordered[int(0.95 * (n - 1))],
+        "max_ms": ordered[-1],
+    }
 
 
 def write_report(out, source, settings, log_text, seconds):
@@ -184,12 +251,15 @@ def write_report(out, source, settings, log_text, seconds):
     stats = statistics_of(times, summary)
     fps = 1e3 / stats["median_ms"] if stats.get("median_ms") else None
     report = {
-        "source": str(source), "out": str(out),
-        "frames": len(list(out.glob("*_out.png"))), "video_seconds": seconds,
+        "source": str(source),
+        "out": str(out),
+        "frames": len(list(out.glob("*_out.png"))),
+        "video_seconds": seconds,
         "frame_rate_fps": round(fps, 2) if fps else None,
         "graph_time_excludes_png_io": True,
         "timing_ms": {k: round(v, 3) for k, v in stats.items()},
-        "settings": settings, "git_revision": git_revision(),
+        "settings": settings,
+        "git_revision": git_revision(),
         "recorded_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "summary": summary,
         "videos": [name for name in ("rendered.mp4", "compare.mp4") if (out / name).exists()],
@@ -197,9 +267,11 @@ def write_report(out, source, settings, log_text, seconds):
     (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     print(f"  {out / 'report.json'}", flush=True)
     if fps:
-        print(f"  {len(times)} frames  median {stats['median_ms']:.2f} ms  "
-              f"mean {stats['mean_ms']:.2f} ms  ->  {fps:.2f} fps  (graph, excludes PNG I/O)",
-              flush=True)
+        print(
+            f"  {len(times)} frames  median {stats['median_ms']:.2f} ms  "
+            f"mean {stats['mean_ms']:.2f} ms  ->  {fps:.2f} fps  (graph, excludes PNG I/O)",
+            flush=True,
+        )
     return report
 
 
@@ -209,14 +281,20 @@ def native(frames, source, out, settings):
     for knob, value in settings.items():
         if knob not in NATIVE_FLAGS:
             raise SystemExit(f"--native has no {knob}; it takes " + ", ".join(sorted(NATIVE_FLAGS)))
-        command += [NATIVE_FLAGS[knob], str(int(value) if knob == "min_extent" else value)]
+        command += [
+            NATIVE_FLAGS[knob],
+            str(int(value) if knob == "min_extent" else value),
+        ]
     done = subprocess.run(command, capture_output=True, text=True)
     if done.returncode:
         raise SystemExit("nr_frame --replay failed:\n" + done.stdout + done.stderr)
     for index, path in enumerate(frames, 1):
         written = out / f"{index:03d}_in.png"
         try:
-            same = np.array_equal(np.rint(image_io.load(written) * 255.0), np.rint(image_io.load(path) * 255.0))
+            same = np.array_equal(
+                np.rint(image_io.load(written) * 255.0),
+                np.rint(image_io.load(path) * 255.0),
+            )
         except RuntimeError as error:
             # No ImageMagick: the frames are on disk and the replay logged each one, but the
             # pixels cannot be compared here. Say so once; do not fail a run that succeeded.
@@ -229,18 +307,34 @@ def native(frames, source, out, settings):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("source", type=pathlib.Path, help="a --dump directory")
     parser.add_argument("out", type=pathlib.Path, help="an empty or new directory")
-    parser.add_argument("--set", action="append", default=[], metavar="KNOB=VALUE",
-                        help="a daemon setting, e.g. render_scale=0.9 or profile=natural")
-    parser.add_argument("--native", action="store_true",
-                        help="through the C frame library (nr_frame --replay), not the daemon")
-    parser.add_argument("--fps", type=float, default=30.0,
-                        help="the frame rate the replay's PNGs are stitched back at (default 30)")
-    parser.add_argument("--no-video", action="store_true",
-                        help="leave only the PNGs; no rendered.mp4 / compare.mp4")
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="KNOB=VALUE",
+        help="a daemon setting, e.g. render_scale=0.9 or profile=natural",
+    )
+    parser.add_argument(
+        "--native",
+        action="store_true",
+        help="through the C frame library (nr_frame --replay), not the daemon",
+    )
+    parser.add_argument(
+        "--fps",
+        type=float,
+        default=30.0,
+        help="the frame rate the replay's PNGs are stitched back at (default 30)",
+    )
+    parser.add_argument(
+        "--no-video",
+        action="store_true",
+        help="leave only the PNGs; no rendered.mp4 / compare.mp4",
+    )
     args = parser.parse_args()
     settings = {"render_scale": 1.0}
     for item in args.set:
@@ -251,7 +345,9 @@ def main():
             settings[knob] = value
     frames = frames_of(args.source)
     if args.out.exists() and any(args.out.iterdir()):
-        raise SystemExit(f"{args.out} is not empty: the daemon numbers its dump after what is there")
+        raise SystemExit(
+            f"{args.out} is not empty: the daemon numbers its dump after what is there"
+        )
     args.out.mkdir(parents=True, exist_ok=True)
     if args.native:
         log_text = native(frames, args.source, args.out, settings)
@@ -263,14 +359,29 @@ def main():
     daemon_log = ""
     with tempfile.TemporaryDirectory() as directory:
         room = pathlib.Path(directory)
-        daemon_socket, settings_file, log = room / "restill.sock", room / "settings.json", room / "log"
+        daemon_socket, settings_file, log = (
+            room / "restill.sock",
+            room / "settings.json",
+            room / "log",
+        )
         settings_file.write_text(json.dumps(settings))
         with open(log, "w") as sink:
             daemon = subprocess.Popen(
-                [sys.executable, str(ROOT / "src" / "layer" / "nr_daemon.py"),
-                 "--socket", str(daemon_socket), "--settings", str(settings_file),
-                 "--max-pixels", str(1920 * 1200), "--dump", str(args.out)],
-                stdout=sink, stderr=subprocess.STDOUT)
+                [
+                    sys.executable,
+                    str(ROOT / "src" / "layer" / "nr_daemon.py"),
+                    "--socket",
+                    str(daemon_socket),
+                    "--settings",
+                    str(settings_file),
+                    "--max-pixels",
+                    str(1920 * 1200),
+                    "--dump",
+                    str(args.out),
+                ],
+                stdout=sink,
+                stderr=subprocess.STDOUT,
+            )
         try:
             for _ in range(600):
                 if daemon_socket.exists():
@@ -278,8 +389,10 @@ def main():
                 if daemon.poll() is not None:
                     raise SystemExit("daemon exited:\n" + log.read_text())
                 time.sleep(0.5)
-            print(f"  {args.source} -> {args.out}, {len(frames)} frames, settings {settings}",
-                  flush=True)
+            print(
+                f"  {args.source} -> {args.out}, {len(frames)} frames, settings {settings}",
+                flush=True,
+            )
             for index, path in enumerate(frames, 1):
                 width, height, rgb, payload = bgra(path)
                 exchange(str(daemon_socket), width, height, payload)
@@ -288,15 +401,22 @@ def main():
                 # the dump: wait for the line, and both pictures are on disk.
                 said = []
                 for _ in range(600):
-                    said = [line.strip() for line in log.read_text().splitlines() if "B8G8R8A8" in line]
+                    said = [
+                        line.strip() for line in log.read_text().splitlines() if "B8G8R8A8" in line
+                    ]
                     if len(said) >= index or daemon.poll() is not None:
                         break
                     time.sleep(0.1)
                 if len(said) < index:
-                    raise SystemExit("the daemon did not log frame %d:\n%s" % (index, log.read_text()))
+                    raise SystemExit(
+                        "the daemon did not log frame %d:\n%s" % (index, log.read_text())
+                    )
                 same = np.array_equal(np.rint(image_io.load(written) * 255.0).astype(np.uint8), rgb)
-                print(f"  {path.name} -> {written.name}  {'same frame' if same else 'DIFFERENT FRAME'}"
-                      f"  {said[index - 1]}", flush=True)
+                print(
+                    f"  {path.name} -> {written.name}  {'same frame' if same else 'DIFFERENT FRAME'}"
+                    f"  {said[index - 1]}",
+                    flush=True,
+                )
                 if not same:
                     raise SystemExit(f"{written} is not the frame sent from {path}")
         finally:

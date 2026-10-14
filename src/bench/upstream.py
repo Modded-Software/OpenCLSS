@@ -10,12 +10,13 @@ rendering at half and upscaling should cost a quarter.
 We have no upscaler to hide behind, so this measures the honest local version: shrink,
 enhance, enlarge. What it costs in fidelity is the point.
 """
-import argparse, pathlib, sys, time
-import numpy as np
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src" / "ref"))
-import image_io, nr_frame  # noqa: E402
+import argparse
+import time
+
+import image_io
+import nr_frame
+import numpy as np
 
 resample = nr_frame.composition_mod.resample
 
@@ -40,10 +41,14 @@ def main():
     _, seconds = enhance(source)
     effect = np.abs(full - source).mean()
     print(f"  {width}x{height}, the effect at full resolution is {effect:.5f}\n")
-    print("  %-16s %10s %9s %11s %12s %s"
-          % ("run at", "ms", "fps", "effect", "of full", "detail kept"))
-    print("  %-16s %10.0f %9.2f %11.5f %11.0f%% %12s"
-          % (f"{width}x{height}", 1000 * seconds, 1 / seconds, effect, 100, "-"))
+    print(
+        "  %-16s %10s %9s %11s %12s %s"
+        % ("run at", "ms", "fps", "effect", "of full", "detail kept")
+    )
+    print(
+        "  %-16s %10.0f %9.2f %11.5f %11.0f%% %12s"
+        % (f"{width}x{height}", 1000 * seconds, 1 / seconds, effect, 100, "-")
+    )
 
     for factor in (int(v) for v in args.factors.split(",")):
         if factor == 1:
@@ -58,13 +63,25 @@ def main():
         enlarged = resample(out, width, height)
         change = np.abs(enlarged - source).mean()
         # how much of the full-resolution enhancement survives the round trip
-        kept = float(np.sum((enlarged - source) * (full - source))
-                     / max(float(np.sum((full - source) ** 2)), 1e-12))
-        print("  %-16s %10.0f %9.2f %11.5f %11.0f%% %11.0f%%"
-              % (f"{w}x{h}", 1000 * seconds, 1 / seconds, change,
-                 100 * change / effect, 100 * kept))
-    print("\n  'detail kept' projects the small-run change onto the full-run one:"
-          "\n  100% would mean the same enhancement, 0% would mean unrelated.")
+        kept = float(
+            np.sum((enlarged - source) * (full - source))
+            / max(float(np.sum((full - source) ** 2)), 1e-12)
+        )
+        print(
+            "  %-16s %10.0f %9.2f %11.5f %11.0f%% %11.0f%%"
+            % (
+                f"{w}x{h}",
+                1000 * seconds,
+                1 / seconds,
+                change,
+                100 * change / effect,
+                100 * kept,
+            )
+        )
+    print(
+        "\n  'detail kept' projects the small-run change onto the full-run one:"
+        "\n  100% would mean the same enhancement, 0% would mean unrelated."
+    )
 
 
 if __name__ == "__main__":

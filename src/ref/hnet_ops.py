@@ -15,12 +15,13 @@ wrong guess fails loudly instead of producing plausible garbage.
 Numerics follow the Phase 4 contract throughout: FP16 operands, FP32 accumulation
 (cooperative matrix config 1, `notes/hw-coopmat.md`).
 """
+
 import numpy as np
 
-HEAD_DIM = 32          # verified: every config carries head dim 32
-WINDOW = 8             # verified: Attention2dConfig <..., 8, 8, ...>
+HEAD_DIM = 32  # verified: every config carries head dim 32
+WINDOW = 8  # verified: Attention2dConfig <..., 8, 8, ...>
 TOKENS = WINDOW * WINDOW
-GQA_RATIO = 4          # verified: FusedSwin2dQKVAttnConfig<512, 8, 8, 16, 4, ...>
+GQA_RATIO = 4  # verified: FusedSwin2dQKVAttnConfig<512, 8, 8, 16, 4, ...>
 
 
 def linear(x, w, b=None):
@@ -58,10 +59,20 @@ def softmax(x, axis=-1):
 # a, b, lo, hi are the f16 constants; `sh` the shift. Two variants exist across the
 # 231 kernels and no others: Swin/post-block clamps the logits to +-6, ViT to +-3.
 EXP_VARIANTS = {
-    "swin": (np.float16(0.044921875), np.float16(1.30078125),
-             np.float16(1.03125), np.float16(1.5693359375), 5),      # 114 kernels
-    "vit":  (np.float16(0.08953857421875), np.float16(1.708984375),
-             np.float16(1.439453125), np.float16(1.9775390625), 4),  # 12 kernels
+    "swin": (
+        np.float16(0.044921875),
+        np.float16(1.30078125),
+        np.float16(1.03125),
+        np.float16(1.5693359375),
+        5,
+    ),  # 114 kernels
+    "vit": (
+        np.float16(0.08953857421875),
+        np.float16(1.708984375),
+        np.float16(1.439453125),
+        np.float16(1.9775390625),
+        4,
+    ),  # 12 kernels
 }
 LOGIT_CLAMP = {"swin": 6.0, "vit": 3.0}
 
@@ -82,7 +93,7 @@ def ptx_softmax(x, axis=-1, variant="swin", eps=None):
     """
     e = ptx_exp(x, variant)
     if eps is None:
-        eps = 6.1e-5                       # smallest normal f16; the kernels floor here
+        eps = 6.1e-5  # smallest normal f16; the kernels floor here
     return e / np.maximum(e.sum(axis=axis, keepdims=True), eps)
 
 
@@ -168,33 +179,36 @@ class SplitSwin16H:
 
     def __init__(self, net, block, C=512):
         self.C, self.n = C, block
-        g = lambda i: net.raw("block%d.layer%d.layer" % (block, i))
+
+        def g(i):
+            return net.raw("block%d.layer%d.layer" % (block, i))
+
         self.proj = g(0).reshape(C, C)
         # layer1 / layer3: [C^2/2 matrix][C cosine gate]. The trailing C values are
         # NOT biases -- they are cos-skip gates: range [-1,1], max exactly 1.0.
-        self.w_ffwd = g(1)[:C * C // 2].reshape(C, C // 2)
-        self.gate_a = g(1)[C * C // 2:]
+        self.w_ffwd = g(1)[: C * C // 2].reshape(C, C // 2)
+        self.gate_a = g(1)[C * C // 2 :]
         l2 = g(2)
         qkv_n = 3 * C * C // 2
         self.qkv = l2[:qkv_n]
         H = C // HEAD_DIM
-        self.attn_bias = l2[qkv_n:qkv_n + 128 * C].astype(np.float32).reshape(H, TOKENS, TOKENS)
+        self.attn_bias = l2[qkv_n : qkv_n + 128 * C].astype(np.float32).reshape(H, TOKENS, TOKENS)
         # trailing 2*H values: odd slots are the learned per-head attention scale
         # (16 values at C=512, 32 at C=1024, all in a tight 1.1-2.2 band).
-        self.attn_scale = l2[qkv_n + 128 * C:].astype(np.float32)[1::2]
+        self.attn_scale = l2[qkv_n + 128 * C :].astype(np.float32)[1::2]
         assert self.attn_scale.size == H, "attn_scale length must equal the head count"
-        self.w_ffwd_proj = g(3)[:C * C // 2].reshape(C, C // 2)
-        self.gate_b = g(3)[C * C // 2:]
+        self.w_ffwd_proj = g(3)[: C * C // 2].reshape(C, C // 2)
+        self.gate_b = g(3)[C * C // 2 :]
         # GQA split: Q is C x C, K and V are each C x C/4
-        self.wq = self.qkv[:C * C].reshape(C, C)
-        self.wk = self.qkv[C * C: C * C + C * C // 4].reshape(C, C // 4)
-        self.wv = self.qkv[C * C + C * C // 4:].reshape(C, C // 4)
+        self.wq = self.qkv[: C * C].reshape(C, C)
+        self.wk = self.qkv[C * C : C * C + C * C // 4].reshape(C, C // 4)
+        self.wv = self.qkv[C * C + C * C // 4 :].reshape(C, C // 4)
         assert self.wv.size == C * C // 4, "GQA split does not consume the qkv slice exactly"
 
     def feed_forward(self, x):
         """x:(T,C) float16 -> (T,C) float32.  HYPOTHESIS: C -> C/2 -> C."""
-        h = linear(x, self.w_ffwd)                     # (T, C/2)
-        h = h * (h > 0)                                # ReLU-family gate, a stand-in
+        h = linear(x, self.w_ffwd)  # (T, C/2)
+        h = h * (h > 0)  # ReLU-family gate, a stand-in
         return linear(h.astype(np.float16), self.w_ffwd_proj.T.copy())
 
     def attend(self, tokens):
@@ -203,47 +217,59 @@ class SplitSwin16H:
         q = linear(tokens, self.wq)
         k = linear(tokens, self.wk)
         v = linear(tokens, self.wv)
-        a = gqa_attention(q, k, v, self.attn_bias,
-                          C // HEAD_DIM, (C // HEAD_DIM) // GQA_RATIO, self.attn_scale)
+        a = gqa_attention(
+            q,
+            k,
+            v,
+            self.attn_bias,
+            C // HEAD_DIM,
+            (C // HEAD_DIM) // GQA_RATIO,
+            self.attn_scale,
+        )
         return linear(a.astype(np.float16), self.proj)
 
 
 def _selftest():
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
     from hnet_ref import HNet
 
     net = HNet("work/weights_ht.bin")
     blk = SplitSwin16H(net, 23)
     C = blk.C
     print("== block23 (split-Swin-16H, C=%d) ==" % C)
-    print("   wq %s  wk %s  wv %s  proj %s" % (blk.wq.shape, blk.wk.shape, blk.wv.shape, blk.proj.shape))
-    print("   attention bias %s  heads=%d  window=%dx%d (%d tokens)"
-          % (blk.attn_bias.shape, C // HEAD_DIM, WINDOW, WINDOW, TOKENS))
+    print(f"   wq {blk.wq.shape}  wk {blk.wk.shape}  wv {blk.wv.shape}  proj {blk.proj.shape}")
+    print(
+        "   attention bias %s  heads=%d  window=%dx%d (%d tokens)"
+        % (blk.attn_bias.shape, C // HEAD_DIM, WINDOW, WINDOW, TOKENS)
+    )
 
     print("\n== window partition round-trip ==")
     x = np.random.default_rng(0).standard_normal((16, 16, 8)).astype(np.float32)
     assert np.array_equal(window_reverse(window_partition(x), 16, 16), x)
-    print("   (16,16,8) -> %s -> back: exact" % (window_partition(x).shape,))
+    print(f"   (16,16,8) -> {window_partition(x).shape} -> back: exact")
 
     print("\n== one attention window on real weights ==")
     rng = np.random.default_rng(1)
     tok = (rng.standard_normal((TOKENS, C)) * 0.1).astype(np.float16)
     out = blk.attend(tok)
-    print("   input  %s  finite=%s" % (tok.shape, np.isfinite(tok).all()))
-    print("   output %s  finite=%s  mean=%+.4g  sd=%.4g  range [%+.3g, %+.3g]"
-          % (out.shape, np.isfinite(out).all(), out.mean(), out.std(), out.min(), out.max()))
+    print(f"   input  {tok.shape}  finite={np.isfinite(tok).all()}")
+    print(
+        f"   output {out.shape}  finite={np.isfinite(out).all()}  mean={out.mean():+.4g}  sd={out.std():.4g}  range [{out.min():+.3g}, {out.max():+.3g}]"
+    )
 
     print("\n== attention weights are a proper distribution ==")
-    q = linear(tok, blk.wq); k = linear(tok, blk.wk)
+    q = linear(tok, blk.wq)
+    k = linear(tok, blk.wk)
     qq = q.reshape(TOKENS, C // HEAD_DIM, HEAD_DIM).transpose(1, 0, 2)
-    kk = np.repeat(k.reshape(TOKENS, (C // HEAD_DIM) // GQA_RATIO, HEAD_DIM).transpose(1, 0, 2),
-                   GQA_RATIO, axis=0)
+    kk = np.repeat(
+        k.reshape(TOKENS, (C // HEAD_DIM) // GQA_RATIO, HEAD_DIM).transpose(1, 0, 2),
+        GQA_RATIO,
+        axis=0,
+    )
     p = softmax(qq @ kk.transpose(0, 2, 1) / np.sqrt(HEAD_DIM) + blk.attn_bias)
-    print("   rows sum to 1: max deviation %.3e" % np.abs(p.sum(-1) - 1).max())
-    print("   min prob %.3e   max prob %.4f   entropy/head %s"
-          % (p.min(), p.max(), np.round(-(p * np.log(p + 1e-30)).sum(-1).mean(-1)[:4], 3).tolist()))
+    print(f"   rows sum to 1: max deviation {np.abs(p.sum(-1) - 1).max():.3e}")
+    print(
+        f"   min prob {p.min():.3e}   max prob {p.max():.4f}   entropy/head {np.round(-(p * np.log(p + 1e-30)).sum(-1).mean(-1)[:4], 3).tolist()}"
+    )
     return 0
 
 

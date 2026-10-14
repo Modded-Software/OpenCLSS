@@ -10,26 +10,39 @@ Driven through ctypes because the machine has `libOpenCL.so` and no CL headers. 
 every entry point: without argtypes, ctypes passes handles as truncated ints and the
 first call into the driver takes the process with it.
 """
-import argparse, ctypes, pathlib, sys, time
+
+import argparse
+import ctypes
+import pathlib
+import sys
+import time
+
 import numpy as np
 
 CL = ctypes.CDLL("libOpenCL.so")
-V, U, I, S, L = ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_size_t, ctypes.c_ulonglong
+V, U, I, S, L = (
+    ctypes.c_void_p,
+    ctypes.c_uint,
+    ctypes.c_int,
+    ctypes.c_size_t,
+    ctypes.c_ulonglong,
+)
 PI, PU = ctypes.POINTER(I), ctypes.POINTER(U)
 for name, args, ret in (
-        ("clGetPlatformIDs", [U, V, PU], I),
-        ("clGetDeviceIDs", [V, L, U, V, PU], I),
-        ("clCreateContext", [V, U, V, V, V, PI], V),
-        ("clCreateCommandQueue", [V, V, L, PI], V),
-        ("clCreateProgramWithSource", [V, U, V, V, PI], V),
-        ("clBuildProgram", [V, U, V, ctypes.c_char_p, V, V], I),
-        ("clGetProgramBuildInfo", [V, V, U, S, V, V], I),
-        ("clCreateKernel", [V, ctypes.c_char_p, PI], V),
-        ("clCreateBuffer", [V, L, S, V, PI], V),
-        ("clSetKernelArg", [V, U, S, V], I),
-        ("clEnqueueNDRangeKernel", [V, V, U, V, V, V, U, V, V], I),
-        ("clEnqueueReadBuffer", [V, V, U, S, S, V, U, V, V], I),
-        ("clFinish", [V], I)):
+    ("clGetPlatformIDs", [U, V, PU], I),
+    ("clGetDeviceIDs", [V, L, U, V, PU], I),
+    ("clCreateContext", [V, U, V, V, V, PI], V),
+    ("clCreateCommandQueue", [V, V, L, PI], V),
+    ("clCreateProgramWithSource", [V, U, V, V, PI], V),
+    ("clBuildProgram", [V, U, V, ctypes.c_char_p, V, V], I),
+    ("clGetProgramBuildInfo", [V, V, U, S, V, V], I),
+    ("clCreateKernel", [V, ctypes.c_char_p, PI], V),
+    ("clCreateBuffer", [V, L, S, V, PI], V),
+    ("clSetKernelArg", [V, U, S, V], I),
+    ("clEnqueueNDRangeKernel", [V, V, U, V, V, V, U, V, V], I),
+    ("clEnqueueReadBuffer", [V, V, U, S, S, V, U, V, V], I),
+    ("clFinish", [V], I),
+):
     getattr(CL, name).argtypes, getattr(CL, name).restype = args, ret
 
 GPU, READ_ONLY, WRITE_ONLY, COPY_HOST = 1 << 2, 1 << 2, 1 << 1, 1 << 5
@@ -41,9 +54,14 @@ def device_and_context():
     CL.clGetPlatformIDs(4, platforms, ctypes.byref(count))
     for index in range(count.value):
         devices, found = (V * 4)(), U()
-        if not CL.clGetDeviceIDs(V(platforms[index]), GPU, 4, devices, ctypes.byref(found)) and found.value:
+        if (
+            not CL.clGetDeviceIDs(V(platforms[index]), GPU, 4, devices, ctypes.byref(found))
+            and found.value
+        ):
             device, err = V(devices[0]), I()
-            context = CL.clCreateContext(None, 1, ctypes.byref(device), None, None, ctypes.byref(err))
+            context = CL.clCreateContext(
+                None, 1, ctypes.byref(device), None, None, ctypes.byref(err)
+            )
             if err.value:
                 raise RuntimeError(f"clCreateContext: {err.value}")
             return device, context
@@ -54,8 +72,9 @@ def compile_kernel(context, device, source, options):
     err = I()
     text = source.encode()
     array, length = ctypes.c_char_p(text), S(len(text))
-    program = CL.clCreateProgramWithSource(context, 1, ctypes.byref(array),
-                                           ctypes.byref(length), ctypes.byref(err))
+    program = CL.clCreateProgramWithSource(
+        context, 1, ctypes.byref(array), ctypes.byref(length), ctypes.byref(err)
+    )
     if err.value:
         raise RuntimeError(f"clCreateProgramWithSource: {err.value}")
     if CL.clBuildProgram(program, 1, ctypes.byref(device), options.encode(), None, None):
@@ -82,8 +101,13 @@ def run(M, N, K, RM, RN, source, repeats=3, calls=40):
     C = np.zeros((M, N), np.float32)
 
     def buffer(array, flags):
-        handle = CL.clCreateBuffer(context, flags | COPY_HOST, array.nbytes,
-                                   array.ctypes.data, ctypes.byref(err))
+        handle = CL.clCreateBuffer(
+            context,
+            flags | COPY_HOST,
+            array.nbytes,
+            array.ctypes.data,
+            ctypes.byref(err),
+        )
         if err.value:
             raise RuntimeError(f"clCreateBuffer: {err.value}")
         return V(handle)
@@ -105,8 +129,10 @@ def run(M, N, K, RM, RN, source, repeats=3, calls=40):
         CL.clFinish(queue)
 
     once()
-    best = min((lambda t=time.perf_counter(): (once(), time.perf_counter() - t)[1])()
-               for _ in range(repeats))
+    best = min(
+        (lambda t=time.perf_counter(): (once(), time.perf_counter() - t)[1])()
+        for _ in range(repeats)
+    )
     CL.clEnqueueReadBuffer(queue, dc, 1, 0, C.nbytes, C.ctypes.data, 0, None, None)
     want = A.astype(np.float32) @ B.astype(np.float32)
     error = float(np.abs(C - want).max() / max(float(np.abs(want).max()), 1e-9))
@@ -121,7 +147,7 @@ def main():
     M, N, K = (int(v) for v in args.shape.split(","))
     source = pathlib.Path(__file__).with_suffix(".cl").read_text()
     print(f"  {M}x{N}x{K}, subgroup 16, Intel DPAS through OpenCL")
-    print(f"  for comparison, Vulkan cooperative matrix on this machine peaks at 3178 GFLOP/s\n")
+    print("  for comparison, Vulkan cooperative matrix on this machine peaks at 3178 GFLOP/s\n")
     print("  %-12s %12s %14s %s" % ("block", "GFLOP/s", "max rel err", "of peak"))
     for block in args.blocks.split(","):
         rm, rn = (int(v) for v in block.split("x"))
@@ -129,9 +155,14 @@ def main():
             continue
         try:
             rate, error = run(M, N, K, rm, rn, source)
-            print("  %-12s %12.1f %14.2e %6.1f%%" % (f"{8*rm}x{16*rn}", rate, error, 100 * rate / 32000))
+            print(
+                "  %-12s %12.1f %14.2e %6.1f%%"
+                % (f"{8 * rm}x{16 * rn}", rate, error, 100 * rate / 32000)
+            )
         except RuntimeError as failure:
-            sys.stderr.write("  %-12s %s\n" % (f"{8*rm}x{16*rn}", str(failure).splitlines()[0][:90]))
+            sys.stderr.write(
+                "  %-12s %s\n" % (f"{8 * rm}x{16 * rn}", str(failure).splitlines()[0][:90])
+            )
 
 
 if __name__ == "__main__":

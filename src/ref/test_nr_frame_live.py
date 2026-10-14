@@ -13,18 +13,15 @@ which frame it is and at which extent - since both sides run the same kernels.
 Runs on the real weights when they exist, else on random weights of the real shapes, on
 whichever runtime is behind the library (NR_GPU_BACKEND).
 """
+
 import pathlib
 import sys
 import tempfile
 
+import nr_frame
+import nr_frame_native
 import numpy as np
-
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src" / "ref"))
-sys.path.insert(0, str(ROOT / "src" / "layer"))
-import nr_frame  # noqa: E402
-import nr_frame_native  # noqa: E402
-import test_nr_frame_c  # noqa: E402
+import test_nr_frame_c
 
 FAILED = []
 
@@ -50,9 +47,14 @@ def shot(rng, height, width, bars, frames, pan, cut_at):
         picture = pictures[index >= cut_at]
         x = pan * index
         rgb = np.zeros((height, width, 3), np.uint8)
-        rgb[bars:height - bars] = np.rint(picture[:, x:x + width] * 255).astype(np.uint8)
+        rgb[bars : height - bars] = np.rint(picture[:, x : x + width] * 255).astype(np.uint8)
         bgra = np.empty((height, width, 4), np.uint8)
-        bgra[..., 0], bgra[..., 1], bgra[..., 2], bgra[..., 3] = rgb[..., 2], rgb[..., 1], rgb[..., 0], 255
+        bgra[..., 0], bgra[..., 1], bgra[..., 2], bgra[..., 3] = (
+            rgb[..., 2],
+            rgb[..., 1],
+            rgb[..., 0],
+            255,
+        )
         out.append(bgra)
     return out
 
@@ -64,8 +66,16 @@ class Mirror:
         self.native, self.daemon = native, nr_daemon
         self.letterbox, self.history = nr_daemon.Letterbox(), nr_daemon.History()
 
-    def run(self, payload, render_scale, temporal=1.0, hold=1.0, release=24.0, cut_limit=0.15,
-            **values):
+    def run(
+        self,
+        payload,
+        render_scale,
+        temporal=1.0,
+        hold=1.0,
+        release=24.0,
+        cut_limit=0.15,
+        **values,
+    ):
         d = self.daemon
         height, width = payload.shape[:2]
         whole = d.decode(payload.tobytes(), width, height, 44)
@@ -79,17 +89,32 @@ class Mirror:
                 inner = np.ascontiguousarray(d.resample(colour, (extent[1], extent[0])), np.float32)
         key = (width, height, 44, top, bottom, left, right, "standard")
         history_inner, history_full, history_pixels = self.history.take(
-            key, inner, cut_limit if temporal > 0 else -1.0)
+            key, inner, cut_limit if temporal > 0 else -1.0
+        )
         head = self.native.head(inner, history=history_inner, **values)
-        previous = history_pixels if history_pixels is not None and (hold > 0 or release > 0) else None
+        previous = (
+            history_pixels if history_pixels is not None and (hold > 0 or release > 0) else None
+        )
         answer = payload.copy()
         neural = np.empty((active_height, active_width, 3), np.float32) if temporal > 0 else None
         self.native.compose_encode(
-            head, colour, answer, top=top, left=left, bgra=True, history=history_full,
-            previous=previous, neural=neural, history_confidence=temporal,
+            head,
+            colour,
+            answer,
+            top=top,
+            left=left,
+            bgra=True,
+            history=history_full,
+            previous=previous,
+            neural=neural,
+            history_confidence=temporal,
             hold=hold if previous is not None else 0.0,
-            slope=float(np.float32(-255.0 * hold / float(nr_frame.HOLD_RAMP))) if previous is not None else 0.0,
-            release=nr_frame.release_slope(release) if previous is not None else 0.0, **values)
+            slope=float(np.float32(-255.0 * hold / float(nr_frame.HOLD_RAMP)))
+            if previous is not None
+            else 0.0,
+            release=nr_frame.release_slope(release) if previous is not None else 0.0,
+            **values,
+        )
         if temporal > 0:
             self.history.keep(key, neural, inner, colour)
         return answer, (top, bottom, left, right), history_full is not None
@@ -97,9 +122,12 @@ class Mirror:
 
 def main():
     if not nr_frame_native.LIBRARY.exists():
-        print(f"nr_frame live: skipped (build {nr_frame_native.LIBRARY.name} first) - a skip is not a pass")
+        print(
+            f"nr_frame live: skipped (build {nr_frame_native.LIBRARY.name} first) - a skip is not a pass"
+        )
         return 0
-    import nr_daemon  # noqa: E402  (after the library check: it opens nothing on import)
+    import nr_daemon
+
     with tempfile.TemporaryDirectory(prefix="nr-frame-live-") as room:
         weights = nr_frame.WEIGHTS
         if not weights.exists():
@@ -110,11 +138,16 @@ def main():
         print(f"nr_frame_live on {native.device}: {native.gemm_path}")
         rng = np.random.default_rng(11)
         frames = shot(rng, 240, 320, 32, 7, 2, 4)
-        cases = [("scale 1", dict(render_scale=1.0)),
-                 ("scale 0.5, area mean", dict(render_scale=0.5)),
-                 ("scale 0.6, bilinear", dict(render_scale=0.6)),
-                 ("detail split, no release", dict(render_scale=1.0, detail_strength=0.5, release=0.0)),
-                 ("no history", dict(render_scale=0.6, temporal=0.0))]
+        cases = [
+            ("scale 1", {"render_scale": 1.0}),
+            ("scale 0.5, area mean", {"render_scale": 0.5}),
+            ("scale 0.6, bilinear", {"render_scale": 0.6}),
+            (
+                "detail split, no release",
+                {"render_scale": 1.0, "detail_strength": 0.5, "release": 0.0},
+            ),
+            ("no history", {"render_scale": 0.6, "temporal": 0.0}),
+        ]
         for name, values in cases:
             mirror, live = Mirror(native, nr_daemon), nr_frame_native.NativeLive(native)
             same, history_at, used_count = [], [], 0
@@ -123,23 +156,46 @@ def main():
                 got, report = live.run(payload, **values)
                 same.append(np.array_equal(want, got))
                 used_count += report["with_history"]
-                history_at.append((report["with_history"] == int(used),
-                                   (report["top"], report["bottom"], report["left"], report["right"]) == bounds))
-            check(f"{name}: every answer the daemon's", all(same),
-                  f"{sum(same)} of {len(same)} frames identical")
-            check(f"{name}: the history taken and the bars found where the daemon's are",
-                  all(a and b for a, b in history_at), f"history on {used_count} frames")
+                history_at.append(
+                    (
+                        report["with_history"] == int(used),
+                        (
+                            report["top"],
+                            report["bottom"],
+                            report["left"],
+                            report["right"],
+                        )
+                        == bounds,
+                    )
+                )
+            check(
+                f"{name}: every answer the daemon's",
+                all(same),
+                f"{sum(same)} of {len(same)} frames identical",
+            )
+            check(
+                f"{name}: the history taken and the bars found where the daemon's are",
+                all(a and b for a, b in history_at),
+                f"history on {used_count} frames",
+            )
             live.close()
         # the history is used after the first frame and dropped at the cut
         live = nr_frame_native.NativeLive(native)
         used = [live.run(payload)[1]["with_history"] for payload in frames]
-        check("history on a pan, dropped at the cut", used == [0, 1, 1, 1, 0, 1, 1], f"{used}")
+        check(
+            "history on a pan, dropped at the cut",
+            used == [0, 1, 1, 1, 0, 1, 1],
+            f"{used}",
+        )
         # the answer may be the request itself, and the bars come back as they went
         live.reset()
         answer, report = live.run(frames[0])
-        check("the bars untouched", np.array_equal(answer[:32], frames[0][:32])
-              and np.array_equal(answer[-32:], frames[0][-32:]),
-              f"active {report['top']}-{report['bottom']}")
+        check(
+            "the bars untouched",
+            np.array_equal(answer[:32], frames[0][:32])
+            and np.array_equal(answer[-32:], frames[0][-32:]),
+            f"active {report['top']}-{report['bottom']}",
+        )
         live.close()
         native.close()
     print("nr_frame live: " + ("all checks passed" if not FAILED else f"{len(FAILED)} FAILED"))

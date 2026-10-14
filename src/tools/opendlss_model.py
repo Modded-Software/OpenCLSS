@@ -20,6 +20,7 @@ Like everything derived from the DLL, the directory this writes is NVIDIA's and 
 
     python3 src/tools/opendlss_model.py [work/weights_ht.bin] [work/opendlss-model]
 """
+
 import hashlib
 import json
 import pathlib
@@ -45,17 +46,34 @@ def write(container, destination):
         index = len(stages)
         data = bytearray(size)
         for record, offset in current:
-            data[offset:offset + record["nbytes"]] = blob[record["offset"]:record["offset"] + record["nbytes"]]
+            data[offset : offset + record["nbytes"]] = blob[
+                record["offset"] : record["offset"] + record["nbytes"]
+            ]
         name = f"stage{index:02d}.bin"
         (destination / "model" / name).write_bytes(data)
-        stages.append({"id": f"stage{index:02d}", "file": name, "packedByteLength": len(data),
-                       "sha256": hashlib.sha256(data).hexdigest()})
+        stages.append(
+            {
+                "id": f"stage{index:02d}",
+                "file": name,
+                "packedByteLength": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+            }
+        )
         for record, offset in current:
-            block, layer, parameter = re.fullmatch(r"block(\d+)\.layer(\d+)\.(\w+)",
-                                                   record["name"]).groups()
-            tensors.append({"name": record["name"], "block": int(block), "layer": int(layer),
-                            "parameter": parameter, "stage": f"stage{index:02d}",
-                            "stageOffset": offset, "byteLength": record["nbytes"]})
+            block, layer, parameter = re.fullmatch(
+                r"block(\d+)\.layer(\d+)\.(\w+)", record["name"]
+            ).groups()
+            tensors.append(
+                {
+                    "name": record["name"],
+                    "block": int(block),
+                    "layer": int(layer),
+                    "parameter": parameter,
+                    "stage": f"stage{index:02d}",
+                    "stageOffset": offset,
+                    "byteLength": record["nbytes"],
+                }
+            )
         current, size = [], 0
 
     (destination / "model").mkdir(parents=True, exist_ok=True)
@@ -69,8 +87,11 @@ def write(container, destination):
     close()
 
     blocks = {tensor["block"] for tensor in tensors}
-    manifest = {"totals": {"blockCount": max(blocks) + 1, "tensorCount": len(tensors)},
-                "stages": stages, "tensors": tensors}
+    manifest = {
+        "totals": {"blockCount": max(blocks) + 1, "tensorCount": len(tensors)},
+        "stages": stages,
+        "tensors": tensors,
+    }
     (destination / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n")
     return manifest
 
@@ -78,11 +99,15 @@ def write(container, destination):
 def main():
     root = pathlib.Path(__file__).resolve().parents[2]
     container = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else root / "work" / "weights_ht.bin"
-    destination = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else root / "work" / "opendlss-model"
+    destination = (
+        pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else root / "work" / "opendlss-model"
+    )
     manifest = write(container, destination)
     total = sum(stage["packedByteLength"] for stage in manifest["stages"])
-    print(f"{destination}: {len(manifest['tensors'])} tensors in {len(manifest['stages'])} stages, "
-          f"{total / 1048576:.1f} MiB, {manifest['totals']['blockCount']} blocks")
+    print(
+        f"{destination}: {len(manifest['tensors'])} tensors in {len(manifest['stages'])} stages, "
+        f"{total / 1048576:.1f} MiB, {manifest['totals']['blockCount']} blocks"
+    )
 
 
 if __name__ == "__main__":

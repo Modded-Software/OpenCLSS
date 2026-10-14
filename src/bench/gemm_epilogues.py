@@ -29,66 +29,91 @@ names the kernel each row's calls ran on, from the device's own profile.
 Each number is the least of `--rounds` medians, the variants taken in turn within a round, after
 `--warm` seconds of GEMMs: a laptop's GPU clock climbs and dips, and one round reads it too.
 """
+
 import argparse
 import os
-import pathlib
 import statistics
-import sys
 import time
 
 import numpy as np
+from xmxrt import gemm, memory, ops, profile
+from xmxrt.recorder import Recorder
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src" / "gpu"))
-import xmxres  # noqa: E402
-
-# the 1344x768 frame's worst call sites against Mesa, and one narrow contract that is not
-SHAPES = ("64512x128x64", "64512x64x64", "16128x128x128", "4032x128x256", "4032x256x256",
-          "320x4096x1024", "320x1024x4096", "64512x32x128")
+SHAPES = (
+    "64512x128x64",
+    "64512x64x64",
+    "16128x128x128",
+    "4032x128x256",
+    "4032x256x256",
+    "320x4096x1024",
+    "320x1024x4096",
+    "64512x32x128",
+)
 SWEEP = (16128, 128, (32, 64, 128, 256, 512, 1024))
 # libxmx reads these when it builds its pipelines: K below XMX_STAGE_K leaves the staged
 # kernel, K below XMX_TILE_K the tiled one, and what is left is the plain 8x16 kernel
-KERNELS = {"staged": {}, "tiled": {"XMX_STAGE_K": "1000000"},
-           "resident": {"XMX_STAGE_K": "1000000", "XMX_TILE_K": "1000000"}}
+KERNELS = {
+    "staged": {},
+    "tiled": {"XMX_STAGE_K": "1000000"},
+    "resident": {"XMX_STAGE_K": "1000000", "XMX_TILE_K": "1000000"},
+}
 FAMILIES = {0: "resident", 1: "tiled", 2: "staged"}
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--shapes", nargs="*", default=list(SHAPES), metavar="MxNxK")
-    parser.add_argument("--calls", type=int, default=12,
-                        help="calls a variant, in one submit; the first is left out")
-    parser.add_argument("--rounds", type=int, default=3,
-                        help="rounds over every variant; the least median of each is kept")
-    parser.add_argument("--warm", type=float, default=2.0, metavar="SECONDS",
-                        help="GEMMs run first, so the clock has climbed before anything is timed")
+    parser.add_argument(
+        "--calls",
+        type=int,
+        default=12,
+        help="calls a variant, in one submit; the first is left out",
+    )
+    parser.add_argument(
+        "--rounds",
+        type=int,
+        default=3,
+        help="rounds over every variant; the least median of each is kept",
+    )
+    parser.add_argument(
+        "--warm",
+        type=float,
+        default=2.0,
+        metavar="SECONDS",
+        help="GEMMs run first, so the clock has climbed before anything is timed",
+    )
     parser.add_argument("--no-sweep", action="store_true")
-    parser.add_argument("--kernel", choices=KERNELS, default="staged",
-                        help="the GEMM kernel every call runs on")
+    parser.add_argument(
+        "--kernel",
+        choices=KERNELS,
+        default="staged",
+        help="the GEMM kernel every call runs on",
+    )
     args = parser.parse_args()
 
-    os.environ.update(KERNELS[args.kernel])      # before the runtime builds its pipelines
-    rt = xmxres.Runtime()
-    xmxres.profile(True)
+    os.environ.update(KERNELS[args.kernel])  # before the runtime builds its pipelines
+    rt = Recorder()
+    profile.profile(True)
     rng = np.random.default_rng(3)
-    ran = set()                                  # the kernels the timed calls ran on
+    ran = set()  # the kernels the timed calls ran on
     print(f"  {rt.lib.xmx_memory().decode()}")
     print(f"  kernel: {args.kernel}")
 
     def buffer(values, dtype):
         buf = rt.buffer(values.size, dtype)
-        xmxres.host_write(buf, values.astype(dtype))
+        memory.host_write(buf, values.astype(dtype))
         return buf
 
     def timed(record):
-        xmxres.profile_reset()
+        profile.profile_reset()
         rt.begin()
         for _ in range(args.calls):
             record()
         rt.submit()
-        ran.update(FAMILIES.get(kind // 32, str(kind)) for kind in xmxres.profile_each_kinds())
-        return statistics.median(xmxres.profile_each()[1:]) * 1000
+        ran.update(FAMILIES.get(kind // 32, str(kind)) for kind in profile.profile_each_kinds())
+        return statistics.median(profile.profile_each()[1:]) * 1000
 
     def kernels():
         names = ",".join(sorted(ran))
@@ -97,7 +122,7 @@ def main():
 
     def least(records):
         """The least median of each variant over the rounds, the variants in turn."""
-        for record in records:                       # pipelines built outside the timing
+        for record in records:  # pipelines built outside the timing
             rt.begin()
             record()
             rt.submit()
@@ -108,11 +133,14 @@ def main():
         return best
 
     def operands(m, n, k):
-        return (buffer(rng.standard_normal(m * k) * 0.3, np.float16),
-                buffer(rng.standard_normal(k * n) * 0.05, np.float16),
-                rt.buffer(m * n, np.float32), rt.buffer(m * n, np.float16),
-                buffer(rng.standard_normal(m * n) * 0.5, np.float16),
-                buffer(rng.uniform(0.5, 1.0, n), np.float32))
+        return (
+            buffer(rng.standard_normal(m * k) * 0.3, np.float16),
+            buffer(rng.standard_normal(k * n) * 0.05, np.float16),
+            rt.buffer(m * n, np.float32),
+            rt.buffer(m * n, np.float16),
+            buffer(rng.standard_normal(m * n) * 0.5, np.float16),
+            buffer(rng.uniform(0.5, 1.0, n), np.float32),
+        )
 
     # the clock climbs through the first busy second or so
     a, b, c32, _, _, _ = held = operands(16128, 128, 256)
@@ -120,27 +148,45 @@ def main():
     while time.perf_counter() < until:
         rt.begin()
         for _ in range(16):
-            rt.gemm(a, b, c32, 16128, 128, 256)
+            gemm.gemm(rt, a, b, c32, 16128, 128, 256)
         rt.submit()
     for buf in held:
         buf.free()
 
     ran.clear()
-    print(f"\n  {'M x N x K':16} {'f32':>8} {'half':>8} {'e4m3':>8} {'gate':>8} {'resid':>8}"
-          f"   us a call, and the kernel")
+    print(
+        f"\n  {'M x N x K':16} {'f32':>8} {'half':>8} {'e4m3':>8} {'gate':>8} {'resid':>8}"
+        f"   us a call, and the kernel"
+    )
     for shape in args.shapes:
         m, n, k = map(int, shape.lower().split("x"))
         a, b, c32, c16, skip16, cos = held = operands(m, n, k)
-        row = least([lambda: rt.gemm(a, b, c32, m, n, k),
-                     lambda: rt.gemm(a, b, c16, m, n, k, narrow=True),
-                     lambda: rt.gemm(a, b, c16, m, n, k, epilogue=xmxres.EPI_E4M3, narrow=True),
-                     lambda: rt.gemm(a, b, c16, m, n, k, epilogue=xmxres.EPI_GATE_E4M3,
-                                     narrow=True),
-                     lambda: rt.gemm_residual(a, b, skip16, cos, c16, m, n, k,
-                                              epilogue=xmxres.EPI_E4M3, narrow=True,
-                                              skip_half=True)])
-        print(f"  {shape:16} " + " ".join(f"{t:8.1f}" for t in row) + f"   {kernels()}",
-              flush=True)
+        row = least(
+            [
+                lambda: gemm.gemm(rt, a, b, c32, m, n, k),
+                lambda: gemm.gemm(rt, a, b, c16, m, n, k, narrow=True),
+                lambda: gemm.gemm(rt, a, b, c16, m, n, k, epilogue=ops.EPI_E4M3, narrow=True),
+                lambda: gemm.gemm(rt, a, b, c16, m, n, k, epilogue=ops.EPI_GATE_E4M3, narrow=True),
+                lambda: gemm.gemm_residual(
+                    rt,
+                    a,
+                    b,
+                    skip16,
+                    cos,
+                    c16,
+                    m,
+                    n,
+                    k,
+                    epilogue=ops.EPI_E4M3,
+                    narrow=True,
+                    skip_half=True,
+                ),
+            ]
+        )
+        print(
+            f"  {shape:16} " + " ".join(f"{t:8.1f}" for t in row) + f"   {kernels()}",
+            flush=True,
+        )
         for buf in held:
             buf.free()
 
@@ -152,14 +198,19 @@ def main():
     previous = None
     for k in ks:
         a, b, c32, c16, skip16, cos = held = operands(m, n, k)
-        f32, gate = least([lambda: rt.gemm(a, b, c32, m, n, k),
-                           lambda: rt.gemm(a, b, c16, m, n, k, epilogue=xmxres.EPI_GATE_E4M3,
-                                           narrow=True)])
+        f32, gate = least(
+            [
+                lambda: gemm.gemm(rt, a, b, c32, m, n, k),
+                lambda: gemm.gemm(rt, a, b, c16, m, n, k, epilogue=ops.EPI_GATE_E4M3, narrow=True),
+            ]
+        )
         step = ""
         if previous:
             steps = (k - previous[0]) / 32
-            step = (f"   +{(f32 - previous[1]) / steps:.1f} / +{(gate - previous[2]) / steps:.1f}"
-                    f" us a step of 32")
+            step = (
+                f"   +{(f32 - previous[1]) / steps:.1f} / +{(gate - previous[2]) / steps:.1f}"
+                f" us a step of 32"
+            )
         print(f"  {k:6d} {f32:8.1f} {gate:8.1f}{step}   {kernels()}", flush=True)
         previous = (k, f32, gate)
         for buf in held:

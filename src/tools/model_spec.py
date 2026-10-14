@@ -8,13 +8,14 @@ against the kernel template parameters recovered from the PTX
 
 Usage: model_spec.py <weights_ht.bin>
 """
+
 import collections
 import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 from hnet_weights import parse
+
 
 # Verified from PTX and from the weights themselves. Head dim 32, Swin window
 # 8x8 -> 64 tokens, so the attention bias is heads * 64 * 64 = (C/32)*4096 = 128*C.
@@ -24,7 +25,8 @@ from hnet_weights import parse
 #     [ q*C^2/2    ]  second weight group, q = 0 at C=32, 1 at C >= 64
 #     [ r*C^2      ]  transition blocks only (stage change), r = 1
 #     [ 2C + c     ]  per-channel gates / out_gain, c a small residue
-ATTN_BIAS = lambda C: 128 * C
+def ATTN_BIAS(C):
+    return 128 * C
 
 
 def fit_fused(total):
@@ -52,15 +54,26 @@ def classify(b, subs, total):
     if len(subs) == 4:
         return 512, "split-Swin-16H", "C^2 | C^2/2+C | 1.5C^2+128C+32 | C^2/2+C"
     if any(k[1] == "blend_scale" for k in dict(subs)):
-        return 32, "output head + blend_scale", "4C^2 | 128C | out_gain, out_conv_weight, blend"
+        return (
+            32,
+            "output head + blend_scale",
+            "4C^2 | 128C | out_gain, out_conv_weight, blend",
+        )
     if len(subs) >= 5:
-        return 1024, "ViT-1D bottleneck", "2C^2+8 | 2C^2+C | 1.5C^2+128C+64 | 1 | C^2/2+C"
+        return (
+            1024,
+            "ViT-1D bottleneck",
+            "2C^2+8 | 2C^2+C | 1.5C^2+128C+64 | 1 | C^2/2+C",
+        )
     f = fit_fused(total)
     if f:
         C, q, r, c = f
         kind = "fused Swin" + (" + transition" if r else "")
-        return C, kind, "4C^2+64C | 128C |%s%s 2C+%d" % (
-            " C^2/2 |" if q else "", " C^2 |" if r else "", c)
+        return (
+            C,
+            kind,
+            "4C^2+64C | 128C |%s%s 2C+%d" % (" C^2/2 |" if q else "", " C^2 |" if r else "", c),
+        )
     return 1024, "dec_input_upsample", "512x512 + 512"
 
 
@@ -69,20 +82,20 @@ def classify(b, subs, total):
 # exactly; vit_1d carries 2 extra weightless repack kernels and slot 0 / 155 are
 # the clear and the final copy.
 STAGES_EXEC = (
-    ("clear",              0,   0,   None),
-    ("encoder_1h_32",      1,   5,   (0, 4)),
-    ("encoder_2h_64",      6,   9,   (5, 8)),
-    ("encoder_4h_128",     10,  15,  (9, 14)),
-    ("encoder_8h_256",     16,  23,  (15, 22)),
-    ("bottleneck_16h_512", 24,  56,  (23, 30)),
-    ("vit_1d",             57,  98,  (31, 38)),
-    ("decoder_16h_512",    99,  131, (39, 47)),
-    ("decoder_8h_256",     132, 139, (48, 55)),
-    ("decoder_4h_128",     140, 145, (56, 61)),
-    ("decoder_2h_64",      146, 149, (62, 65)),
-    ("decoder_1h_32",      150, 153, (66, 69)),
-    ("output_head",        154, 154, (70, 70)),
-    ("final_copy",         155, 155, None),
+    ("clear", 0, 0, None),
+    ("encoder_1h_32", 1, 5, (0, 4)),
+    ("encoder_2h_64", 6, 9, (5, 8)),
+    ("encoder_4h_128", 10, 15, (9, 14)),
+    ("encoder_8h_256", 16, 23, (15, 22)),
+    ("bottleneck_16h_512", 24, 56, (23, 30)),
+    ("vit_1d", 57, 98, (31, 38)),
+    ("decoder_16h_512", 99, 131, (39, 47)),
+    ("decoder_8h_256", 132, 139, (48, 55)),
+    ("decoder_4h_128", 140, 145, (56, 61)),
+    ("decoder_2h_64", 146, 149, (62, 65)),
+    ("decoder_1h_32", 150, 153, (66, 69)),
+    ("output_head", 154, 154, (70, 70)),
+    ("final_copy", 155, 155, None),
 )
 
 
@@ -117,13 +130,16 @@ def main():
             print("# %-22s %-11s %-14s %s" % (name, "%d-%d" % (a, b), "-", "0 (weightless)"))
             continue
         nrec = sum(len(by[x]) for x in range(blk[0], blk[1] + 1))
-        print("# %-22s %-11s %-14s %d" % (name, "%d-%d" % (a, b),
-                                          "block%d-%d" % blk, nrec))
+        print("# %-22s %-11s %-14s %d" % (name, "%d-%d" % (a, b), "block%d-%d" % blk, nrec))
 
     acc = sum(r[2] for r in rows)
-    print("\n# accounted %s of %s elements -> %s"
-          % (format(acc, ","), format(total_all, ","),
-             "COMPLETE" if acc == total_all else "INCOMPLETE"))
+    print(
+        "\n# accounted {} of {} elements -> {}".format(
+            format(acc, ","),
+            format(total_all, ","),
+            "COMPLETE" if acc == total_all else "INCOMPLETE",
+        )
+    )
     return 0 if acc == total_all else 1
 
 

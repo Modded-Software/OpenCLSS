@@ -9,17 +9,18 @@ is changed: the five DLLs of each architecture are copied out as they are.
     python scripts/fetch_dxvk.py                          # does nothing if work/dxvk is current
     python scripts/fetch_dxvk.py --archive X:\\dxvk-3.1.1.tar.gz
 """
+
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import shutil
 import sys
 import tarfile
 import tempfile
 import urllib.request
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN = ROOT / "dist-tools/dxvk.json"
@@ -38,9 +39,14 @@ def sha256(path: Path) -> str:
 
 def current(target: Path, version: str) -> bool:
     marker = target / "VERSION"
-    return (marker.is_file() and marker.read_text(encoding="utf-8").strip() == version
-            and (target / "LICENSE").is_file()
-            and all((target / directory / name).is_file() for directory in DIRECTORIES for name in FILES))
+    return (
+        marker.is_file()
+        and marker.read_text(encoding="utf-8").strip() == version
+        and (target / "LICENSE").is_file()
+        and all(
+            (target / directory / name).is_file() for directory in DIRECTORIES for name in FILES
+        )
+    )
 
 
 def fetch(target: Path, archive: Path | None = None, pin: Path = PIN) -> Path:
@@ -54,10 +60,15 @@ def fetch(target: Path, archive: Path | None = None, pin: Path = PIN) -> Path:
         room = Path(room)
         if archive is None:
             archive = room / Path(pinned["url"]).name
-            with urllib.request.urlopen(pinned["url"], timeout=120) as response, archive.open("wb") as out:
+            with (
+                urllib.request.urlopen(pinned["url"], timeout=120) as response,
+                archive.open("wb") as out,
+            ):
                 shutil.copyfileobj(response, out)
         if sha256(archive) != pinned["sha256"]:
-            raise ValueError(f"{archive} is not DXVK {version}: its SHA-256 differs from {pin.name}'s")
+            raise ValueError(
+                f"{archive} is not DXVK {version}: its SHA-256 differs from {pin.name}'s"
+            )
         stage = room / "dxvk"
         with tarfile.open(archive, "r:gz") as tar:
             for directory in DIRECTORIES:
@@ -77,7 +88,9 @@ def fetch(target: Path, archive: Path | None = None, pin: Path = PIN) -> Path:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--archive", type=Path, help="a local copy of the pinned DXVK archive")
     parser.add_argument("--target", type=Path, default=ROOT / "work/dxvk")
     args = parser.parse_args()

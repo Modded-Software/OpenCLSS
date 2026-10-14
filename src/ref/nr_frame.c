@@ -287,7 +287,7 @@ static int xmx_load(void)
 #endif
 }
 
-/* The shader `xmx.py` and `xmxres.py` choose, environment overrides included: the bare
+/* The shader `xmx.py` and `xmxrt` choose, environment overrides included: the bare
  * name when libxmx carries the module compiled in (it loads that), else the file beside
  * the library. */
 static const char *spv(char *buf, size_t cap, const char *env, const char *name)
@@ -325,14 +325,14 @@ static int xmx_ready(void)
                    spv(b[5], sizeof b[5], "XMX_STAGED_SPV", portable ? "gemm_portable.spv" : "gemm_staged.spv")))
         FAILF("xmx_res_init: %s", X.error());
     /* the fused window attention (both output layouts) and the fused feed-forward, as
-     * `xmxres.Runtime` names them: the `_portable` twins on a device without matrix units */
+     * `xmxrt.recorder.Recorder` names them: the `_portable` twins on a device without matrix units */
     const char *window = spv(b[0], sizeof b[0], "XMX_WINDOW_SPV",
                              portable ? "window_attention_portable.spv" : "window_attention.spv");
     if (X.window_init(window, 0) || X.window_init(window, 1))
         FAILF("xmx_window_init: %s", X.error());
     if (X.ffn_init(spv(b[1], sizeof b[1], "XMX_FFN_SPV", portable ? "ffn_fused_portable.spv" : "ffn_fused.spv")))
         FAILF("xmx_ffn_init: %s", X.error());
-    /* as `xmxres._load`: the 32-row staged builds (accepted and not built by a runtime
+    /* as `xmxrt.native.load`: the 32-row staged builds (accepted and not built by a runtime
      * without a staged kernel) and the whole-row softmax's 256-lane build */
     if (X.staged32_init(spv(b[2], sizeof b[2], "XMX_STAGED32_SPV", "gemm_staged32.spv"),
                         spv(b[3], sizeof b[3], "XMX_STAGED32_DEEP_SPV", "gemm_staged32_deep.spv")))
@@ -726,7 +726,7 @@ static const struct tensor *weightf(const struct weights *w, const char *fmt, in
 /* device buffers                                                              */
 /* ------------------------------------------------------------------------- */
 
-enum { GRAPH = 0, HOST_READ = 1, HOST_WRITE = 2 };      /* xmxres.GRAPH / HOST_READ / HOST_WRITE */
+enum { GRAPH = 0, HOST_READ = 1, HOST_WRITE = 2 };      /* xmxrt.ops.GRAPH / HOST_READ / HOST_WRITE */
 
 /* A buffer holding `bytes` of `data` (or zeros): `Runtime.buffer_from`. */
 static int buffer_with(const void *data, size_t bytes, int kind)
@@ -774,7 +774,7 @@ static int buffer_float(const struct tensor *t)
 }
 
 /* Host write into a HOST_WRITE buffer, host read out of a HOST_READ one:
- * `xmxres.host_write` / `host_view` for the two buffers the host touches. */
+ * `xmxrt.memory.host_write` / `host_view` for the two buffers the host touches. */
 static int host_write(int id, const void *data, size_t bytes)
 {
     if (X.buf_host_visible(id)) { memcpy(X.buf_ptr(id), data, bytes); return 0; }
@@ -1257,7 +1257,7 @@ done:
 /* the frame: weights, the scratch arena, and the graph for one extent          */
 /* ------------------------------------------------------------------------- */
 
-/* `xmxres.ScratchArena.ALIASES`: the roles a block's buffers alias, because their live
+/* `xmxrt.scratch.ScratchArena.ALIASES`: the roles a block's buffers alias, because their live
  * intervals are disjoint and the barriers between passes already order them. */
 enum role {
     R_PROJECTION,      /* hidden16, proj, attended, attention, transition.padded, transition.projected */
@@ -1300,7 +1300,7 @@ struct nr_frame {
     struct named named[MAX_NAMED];
     int named_count;
     int graph;                             /* captured commands, or -1 */
-    /* `xmxres.Runtime.__init__`: the environment switches, read once, the same defaults.
+    /* `xmxrt.recorder.Recorder.__init__`: the environment switches, read once, the same defaults.
      * Each one changes which passes are recorded, and the Python and this file must agree
      * on every one of them for the head to be bit-identical. */
     struct {
@@ -1543,7 +1543,7 @@ static int named_bufferf(struct nr_frame *f, const char *fmt, int i, size_t byte
     return named_buffer(f, name, bytes);
 }
 
-/* -- recording primitives: xmxres.Runtime, flag for flag ------------------ */
+/* -- recording primitives: xmxrt.recorder.Recorder, flag for flag ------------------ */
 
 enum { E4M3 = 0, GATE, HALF, TO_HALF, SCALE, RESIDUAL, FROM_HALF, PARTITION, REVERSE, ADD_BIAS,
        SPLIT_HEADS, MERGE_HEADS, POOL2, UPSAMPLE2, SCALE_CHANNEL, ADD, PAD_END,
@@ -1735,7 +1735,7 @@ static int independent(struct nr_frame *f, int on)
     return 0;
 }
 
-/* -- the fused passes: xmxres.Runtime, flag for flag (notes/improve-fusions.md) --------- */
+/* -- the fused passes: xmxrt.recorder.Recorder, flag for flag (notes/improve-fusions.md) --------- */
 
 /* `Runtime.gemm_residual`: target = a @ b + skip * cosine, the residual in the GEMM's own
  * epilogue; with `reverse` the rows are a window block's, padded and in window order, and
@@ -1866,7 +1866,7 @@ static int gemm_residual_pool(struct nr_frame *f, int a, int b, int skip, int co
     return 0;
 }
 
-/* The fused kernels built on first use, as `xmxres.fused_shader` names them. */
+/* The fused kernels built on first use, as `xmxrt.native.fused_shader` names them. */
 static int window_block_ready(void)
 {
     char b[1200];
@@ -3394,10 +3394,10 @@ nr_frame *nr_frame_open(const char *weights_path)
     f->head_stride = 16;
     f->bottleneck.weight0 = f->bottleneck.sine = -1;
     f->decoder_input.weight0 = f->decoder_input.sine = -1;
-    /* `xmxres.Runtime.__init__`, switch for switch and default for default */
+    /* `xmxrt.recorder.Recorder.__init__`, switch for switch and default for default */
     f->opt.fuse_qk = env_switch("NR_FUSE_QK", 1);
     f->opt.batch_ffn = env_switch("NR_BATCH_FFN", 1);
-    /* Both on since 2026-09-25, as in xmxres.Runtime: the features are built as half
+    /* Both on since 2026-09-25, as in xmxrt.recorder.Recorder: the features are built as half
      * straight into the mapped input, and the last GEMM stores only the four head columns
      * the host reads. The same bytes; =0 restores the float32 input and sixteen columns. */
     f->opt.input_fp16 = env_switch("NR_INPUT_FP16", 1);
@@ -3425,10 +3425,10 @@ nr_frame *nr_frame_open(const char *weights_path)
     f->opt.fuse_glue = env_switch("NR_FUSE_GLUE", 1);
     f->opt.fuse_ffn = env_switch("NR_FUSE_FFN", 1);
     f->opt.fuse_branched_ffn = env_switch("NR_FUSE_BRANCHED_FFN", 0);
-    /* off where the runtime cannot gather a window-ordered A, as xmxres.py decides it */
+    /* off where the runtime cannot gather a window-ordered A, as xmxrt decides it */
     f->opt.fuse_partition = env_switch("NR_FUSE_PARTITION", 1)
                             && X.window_gather && X.window_gather() == 1;
-    /* improve-b.md, as xmxres.Runtime reads them: the pool off where the runtime can pool
+    /* improve-b.md, as xmxrt.recorder.Recorder reads them: the pool off where the runtime can pool
      * nowhere (the same condition as the partition's) */
     f->opt.fuse_transition = env_switch("NR_FUSE_TRANSITION", 1);
     f->opt.fuse_merge_ffn = env_switch("NR_FUSE_MERGE_FFN", 1);

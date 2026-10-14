@@ -6,8 +6,22 @@ real program on a real pty, presses real keys, and reads what came out. Everythi
 at a scratch directory: the panel writes the live settings file, and a test that used the
 real one would be reaching into a running game.
 """
-import fcntl, json, os, pathlib, pty, re, select, socket, struct, subprocess, sys
-import tempfile, termios, threading, time
+
+import fcntl
+import json
+import os
+import pathlib
+import pty
+import re
+import select
+import socket
+import struct
+import subprocess
+import sys
+import tempfile
+import termios
+import threading
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PANEL = ROOT / "src" / "layer" / "nr-panel"
@@ -15,7 +29,10 @@ FAILURES = []
 
 
 def check(name, ok, detail=""):
-    print(f"  [{'ok  ' if ok else 'FAIL'}] {name}{'  ' + detail if detail else ''}", flush=True)
+    print(
+        f"  [{'ok  ' if ok else 'FAIL'}] {name}{'  ' + detail if detail else ''}",
+        flush=True,
+    )
     if not ok:
         FAILURES.append(name)
 
@@ -26,7 +43,7 @@ class Screen:
     def __init__(self, environment, rows=24, columns=100):
         self.output = b""
         self.pid, self.fd = pty.fork()
-        if self.pid == 0:                                   # the child is the panel
+        if self.pid == 0:  # the child is the panel
             os.environ.update(environment)
             os.environ["TERM"] = "xterm-256color"
             os.execv(str(PANEL), [str(PANEL)])
@@ -49,8 +66,9 @@ class Screen:
 
     def text(self):
         """What is on the glass, with the escape sequences taken out."""
-        return re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]|\x1b[()][AB0]|\x1b[=>]|\r", b"",
-                      self.output).decode("utf8", "replace")
+        return re.sub(
+            rb"\x1b\[[0-9;?]*[A-Za-z]|\x1b[()][AB0]|\x1b[=>]|\r", b"", self.output
+        ).decode("utf8", "replace")
 
     def close(self):
         try:
@@ -69,7 +87,6 @@ class Screen:
         os.close(self.fd)
 
 
-
 def squashed(text):
     """Without any whitespace at all.
 
@@ -79,6 +96,7 @@ def squashed(text):
     the terminal happened to break the line.
     """
     return re.sub(r"\s+", "", text)
+
 
 # Application cursor keys, not the normal ones. A curses program that calls `keypad`
 # puts the terminal into that mode (it emits `ESC [ ? 1 h`), and there is no terminal
@@ -117,12 +135,14 @@ def daemons_running():
     got = subprocess.run(["ps", "-eo", "pid,args"], capture_output=True, text=True)
     if got.returncode != 0:
         raise RuntimeError(f"ps failed: {got.stderr.strip()}")
-    return [line.split(None, 1)[0] for line in got.stdout.splitlines()
-            if "nr_daemon.py" in line and "ps -eo" not in line]
+    return [
+        line.split(None, 1)[0]
+        for line in got.stdout.splitlines()
+        if "nr_daemon.py" in line and "ps -eo" not in line
+    ]
 
 
 def main():
-    sys.path.insert(0, str(ROOT / "src" / "layer"))
     import nr_knobs
 
     with tempfile.TemporaryDirectory() as scratch:
@@ -133,11 +153,14 @@ def main():
             "model ready in 0.3s\nlistening on nowhere\n"
             "1024x768 B8G8R8A8_UNORM in 0.20s  change 0.07385  "
             "gate 0.429, held 65%, cut 0.0204  interface 12% left alone  "
-            "letterbox 192px of rows and 0px of columns skipped\n")
-        environment = {"NR_SETTINGS": str(settings),
-                       "NR_LAYER_TRIGGER": str(where / "trigger"),
-                       "NR_LAYER_SOCKET": str(where / "sock"),
-                       "NR_LAYER_LOG": str(log)}
+            "letterbox 192px of rows and 0px of columns skipped\n"
+        )
+        environment = {
+            "NR_SETTINGS": str(settings),
+            "NR_LAYER_TRIGGER": str(where / "trigger"),
+            "NR_LAYER_SOCKET": str(where / "sock"),
+            "NR_LAYER_LOG": str(log),
+        }
 
         before = set(daemons_running())
         server = stand_in_daemon(where / "sock")
@@ -146,54 +169,82 @@ def main():
             screen.pump(2.0)
             drawn = screen.text()
             missing = [knob.label for knob in nr_knobs.KNOBS if knob.label not in drawn]
-            check("every knob is on the screen", not missing,
-                  f"{len(nr_knobs.KNOBS)} of them" if not missing else f"missing {missing}")
+            check(
+                "every knob is on the screen",
+                not missing,
+                f"{len(nr_knobs.KNOBS)} of them" if not missing else f"missing {missing}",
+            )
             flat = squashed(drawn)
             opening = nr_knobs.BY_NAME["render_scale"].detail.split(". ")[0]
-            check("the selected knob explains itself", squashed(opening) in flat,
-                  "the detail text of `render scale`, which starts selected")
-            missing = [text for text in ("1024x768", "held 65%", "gate 0.429", "5.0 fps")
-                       if squashed(text) not in flat]
-            check("the daemon's own last frame is read back, not modelled", not missing,
-                  "extent, gate, held and the rate, out of its log"
-                  if not missing else f"missing {missing}")
+            check(
+                "the selected knob explains itself",
+                squashed(opening) in flat,
+                "the detail text of `render scale`, which starts selected",
+            )
+            missing = [
+                text
+                for text in ("1024x768", "held 65%", "gate 0.429", "5.0 fps")
+                if squashed(text) not in flat
+            ]
+            check(
+                "the daemon's own last frame is read back, not modelled",
+                not missing,
+                "extent, gate, held and the rate, out of its log"
+                if not missing
+                else f"missing {missing}",
+            )
 
             # render scale is first; one step down is 0.05 off the daemon's default of 1.0
             screen.press(LEFT)
-            check("a key writes the settings file",
-                  settings.exists() and json.loads(settings.read_text()).get("render_scale") == 0.95,
-                  json.dumps(json.loads(settings.read_text())) if settings.exists() else "not written")
+            check(
+                "a key writes the settings file",
+                settings.exists() and json.loads(settings.read_text()).get("render_scale") == 0.95,
+                json.dumps(json.loads(settings.read_text()))
+                if settings.exists()
+                else "not written",
+            )
 
             order = [knob.name for knob in nr_knobs.KNOBS]
 
-            def walk(start, to):                   # the table's order, not a count of it
+            def walk(start, to):  # the table's order, not a count of it
                 for _ in range(order.index(to) - order.index(start)):
                     screen.press(DOWN)
 
             walk("render_scale", "profile")
             screen.press(RIGHT)
-            check("a choice knob cycles rather than counts",
-                  json.loads(settings.read_text()).get("profile") in nr_knobs.PROFILES,
-                  json.loads(settings.read_text()).get("profile"))
+            check(
+                "a choice knob cycles rather than counts",
+                json.loads(settings.read_text()).get("profile") in nr_knobs.PROFILES,
+                json.loads(settings.read_text()).get("profile"),
+            )
 
-            for _ in range(40):                    # run into the end of the range
+            for _ in range(40):  # run into the end of the range
                 screen.press(LEFT, settle=0.05)
             screen.pump(0.5)
             profile = json.loads(settings.read_text()).get("profile")
-            check("cycling never leaves the list", profile in nr_knobs.PROFILES, str(profile))
+            check(
+                "cycling never leaves the list",
+                profile in nr_knobs.PROFILES,
+                str(profile),
+            )
 
             walk("profile", "intensity")
             for _ in range(60):
                 screen.press(RIGHT, settle=0.03)
             screen.pump(0.5)
             intensity = json.loads(settings.read_text()).get("intensity")
-            check("a number knob stops at its ceiling",
-                  intensity == nr_knobs.BY_NAME["intensity"].high, str(intensity))
+            check(
+                "a number knob stops at its ceiling",
+                intensity == nr_knobs.BY_NAME["intensity"].high,
+                str(intensity),
+            )
 
             screen.press(b"d")
-            check("`d` gives a knob back to the daemon",
-                  "intensity" not in json.loads(settings.read_text()),
-                  "the key is removed, not set to the default value")
+            check(
+                "`d` gives a knob back to the daemon",
+                "intensity" not in json.loads(settings.read_text()),
+                "the key is removed, not set to the default value",
+            )
 
             trigger = where / "trigger"
             screen.press(b" ")
@@ -205,32 +256,46 @@ def main():
             server.close()
 
         alive = screen.output and b"Traceback" not in screen.output
-        check("it drew without raising", bool(alive),
-              "no traceback on the terminal" if alive else "it crashed")
+        check(
+            "it drew without raising",
+            bool(alive),
+            "no traceback on the terminal" if alive else "it crashed",
+        )
         # A short window must lose the explanation, not the knobs, and must never write
         # over its own footer. Laid out from the height available rather than a picture.
         # four rows of frame around the list: header, status and footer
-        for rows, want_all in ((len(nr_knobs.KNOBS) + 4, True), (len(nr_knobs.KNOBS) + 1, False)):
+        for rows, want_all in (
+            (len(nr_knobs.KNOBS) + 4, True),
+            (len(nr_knobs.KNOBS) + 1, False),
+        ):
             small = Screen(environment, rows=rows, columns=70)
             try:
                 small.pump(1.5)
                 flat = squashed(small.text())
-                labels = [knob.label for knob in nr_knobs.KNOBS
-                          if squashed(knob.label) not in flat]
+                labels = [knob.label for knob in nr_knobs.KNOBS if squashed(knob.label) not in flat]
                 if want_all:
-                    check(f"all the knobs still fit in {rows} rows", not labels,
-                          "the explanation goes first, the list stays")
+                    check(
+                        f"all the knobs still fit in {rows} rows",
+                        not labels,
+                        "the explanation goes first, the list stays",
+                    )
                 else:
-                    check(f"{rows} rows says so rather than ending early",
-                          squashed("window too short") in flat,
-                          "and the list is clipped above the footer")
+                    check(
+                        f"{rows} rows says so rather than ending early",
+                        squashed("window too short") in flat,
+                        "and the list is clipped above the footer",
+                    )
             finally:
                 small.close()
 
         leaked = set(daemons_running()) - before
-        check("it left no daemon behind", not leaked,
-              "the stand-in answered, so the panel had no reason to start one"
-              if not leaked else f"leaked {sorted(leaked)}")
+        check(
+            "it left no daemon behind",
+            not leaked,
+            "the stand-in answered, so the panel had no reason to start one"
+            if not leaked
+            else f"leaked {sorted(leaked)}",
+        )
 
     if FAILURES:
         print(f"\n{len(FAILURES)} FAILED: " + ", ".join(FAILURES), flush=True)

@@ -4,43 +4,92 @@
 Both deploy scripts call this so Windows and Linux use the same completeness
 checks. This copies an existing build; it does not compile or extract weights.
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DIRS = ("layer", "ref", "gpu", "bench")
 WINDOWS_UI = ("NR-Setup.cmd", "windows-wizard.ps1")
-WINDOWS_TOOLS = ("windows_wizard.py", "windows_wizard_core.py", "windows_launch.py")
+WINDOWS_TOOLS = ("windows_wizard.py", "windows_launch.py")
+# The package the Windows tools import: src/tools/wizard is copied whole to scripts/wizard.
+WINDOWS_WIZARD = "wizard"
+WIZARD_FILES = (
+    "__init__.py",
+    "config.py",
+    "state.py",
+    "process.py",
+    "deps.py",
+    "manage.py",
+    "status.py",
+)
 PROXIES = ("nr_vulkan_proxy.dll", "nr_vulkan_proxy32.dll")
 # DXVK for DirectX 8-11 games, from scripts/fetch_dxvk.py: the setup window puts it beside them.
-DXVK = tuple(f"work/dxvk/{directory}/{name}" for directory in ("x64", "x32")
-             for name in ("d3d8.dll", "d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll"))
+DXVK = tuple(
+    f"work/dxvk/{directory}/{name}"
+    for directory in ("x64", "x32")
+    for name in ("d3d8.dll", "d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll")
+)
 DXVK_INFO = ("work/dxvk/LICENSE", "work/dxvk/VERSION")
 IGNORE = shutil.ignore_patterns(
-    ".git", ".venv", "__pycache__", "*.pyc", "*.pyo", "*.o", "*.obj",
-    "*.lib", "*.exp", "*.dll", "*.exe", "*.so*", "*.spv", "*.safetensors",
-    "*.bin", "*.npy", "*.npz", "*.ptx", "*.cubin", "*.fatbin", "*.png",
-    "*.jpg", "*.jpeg", "*.webp", "*.mp4", "*.webm", "*.pt", "*.pth",
-    "*.onnx", "*.gguf", "*.dylib", "*.sys", "*.bmp", "*.gif", "*.7z",
-    "*.zip", "*.zst", "*.tar", "*.gz",
+    ".git",
+    ".venv",
+    "__pycache__",
+    "*.pyc",
+    "*.pyo",
+    "*.o",
+    "*.obj",
+    "*.lib",
+    "*.exp",
+    "*.dll",
+    "*.exe",
+    "*.so*",
+    "*.spv",
+    "*.safetensors",
+    "*.bin",
+    "*.npy",
+    "*.npz",
+    "*.ptx",
+    "*.cubin",
+    "*.fatbin",
+    "*.png",
+    "*.jpg",
+    "*.jpeg",
+    "*.webp",
+    "*.mp4",
+    "*.webm",
+    "*.pt",
+    "*.pth",
+    "*.onnx",
+    "*.gguf",
+    "*.dylib",
+    "*.sys",
+    "*.bmp",
+    "*.gif",
+    "*.7z",
+    "*.zip",
+    "*.zst",
+    "*.tar",
+    "*.gz",
 )
 
 
 def required_shaders(root: Path) -> set[str]:
     """Use the filenames the runtime loads, plus the daemon's startup probe."""
     names = {"half_probe.spv"}
-    for source in ("src/gpu/libxmx.c", "src/gpu/xmx.py", "src/gpu/xmxres.py"):
-        names.update(re.findall(r"([A-Za-z0-9_]+\.spv)",
-                                (root / source).read_text(encoding="utf-8")))
+    for source in ("src/gpu/libxmx.c", "src/gpu/xmx.py", "src/gpu/xmxrt/native.py"):
+        names.update(
+            re.findall(r"([A-Za-z0-9_]+\.spv)", (root / source).read_text(encoding="utf-8"))
+        )
     return names
 
 
@@ -57,17 +106,27 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
 
     windows = platform == "windows"
     layer = "nr_layer.dll" if windows else "libnr_layer.so"
-    libraries = ("libxmx.dll", "libnr_image.dll", "libnr_alloc.dll") if windows else (
-        "libxmx.so", "libnr_image.so")
+    libraries = (
+        ("libxmx.dll", "libnr_image.dll", "libnr_alloc.dll")
+        if windows
+        else ("libxmx.so", "libnr_image.so")
+    )
     shaders = required_shaders(root)
     package = root / "work/mlx-dlss/python/mlxdlss"
     files = [root / "work" / name for name in (layer, *libraries, *sorted(shaders))]
     files += [
-        root / "src/layer/nr_daemon.py", root / "src/layer/nr_knobs.py", root / "src/ref/nr_frame.py",
-        root / "src/layer/VkLayer_dlss_nr.json", root / "scripts/get_weights.py",
-        root / "dist-tools/setup.sh", root / "dist-tools/setup.bat",
-        root / "docs/RELEASE-QUICKSTART.md", root / "LICENSE", root / "NOTICE",
-        root / "work/mlx-dlss/LICENSE", package / "features.py",
+        root / "src/layer/nr_daemon.py",
+        root / "src/layer/nr_knobs.py",
+        root / "src/ref/nr_frame.py",
+        root / "src/layer/VkLayer_dlss_nr.json",
+        root / "scripts/get_weights.py",
+        root / "dist-tools/setup.sh",
+        root / "dist-tools/setup.bat",
+        root / "docs/RELEASE-QUICKSTART.md",
+        root / "LICENSE",
+        root / "NOTICE",
+        root / "work/mlx-dlss/LICENSE",
+        package / "features.py",
         package / "tools/extract_dlssnr_weights.py",
         package / "tools/unpack_dlssnr_weights.py",
     ]
@@ -80,6 +139,7 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
         files += [root / name for name in (*DXVK, *DXVK_INFO)]
         files += [root / "dist-tools" / name for name in WINDOWS_UI]
         files += [root / "src/tools" / name for name in WINDOWS_TOOLS]
+        files += [root / "src/tools" / WINDOWS_WIZARD / name for name in WIZARD_FILES]
     missing = [str(path.relative_to(root)) for path in files if not path.is_file()]
     if missing:
         raise ValueError("Incomplete build; missing: " + ", ".join(missing))
@@ -94,11 +154,16 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
         # Runtime + extractor only, without the upstream checkout's .git or assets.
         shutil.copytree(package, stage / "work/mlx-dlss/python/mlxdlss", ignore=IGNORE)
         shutil.copy2(root / "work/mlx-dlss/LICENSE", stage / "work/mlx-dlss/LICENSE")
-        shutil.copy2(root / "work" / layer, stage / ("nr_layer.dll" if windows else "nr_layer.so"))
+        shutil.copy2(
+            root / "work" / layer,
+            stage / ("nr_layer.dll" if windows else "nr_layer.so"),
+        )
         for name in (*libraries, *sorted(shaders)):
             shutil.copy2(root / "work" / name, stage / "work" / name)
         (stage / "work/nr_settings.json").write_text(
-            json.dumps({"render_scale": 0.4, "min_extent": 320}) + "\n", encoding="utf-8")
+            json.dumps({"render_scale": 0.4, "min_extent": 320}) + "\n",
+            encoding="utf-8",
+        )
         shutil.copy2(root / "src/layer/VkLayer_dlss_nr.json", stage / "VkLayer_dlss_nr.json")
         shutil.copy2(root / "scripts/get_weights.py", stage / "scripts/get_weights.py")
         for name in ("setup.sh", "setup.bat"):
@@ -116,21 +181,40 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
                 shutil.copy2(root / "dist-tools" / name, stage / name)
             for name in WINDOWS_TOOLS:
                 shutil.copy2(root / "src/tools" / name, stage / "scripts" / name)
+            shutil.copytree(
+                root / "src/tools" / WINDOWS_WIZARD,
+                stage / "scripts" / WINDOWS_WIZARD,
+                ignore=IGNORE,
+            )
         # Bug reports from a prebuilt package do not require an installed Git.
         commit = None
         try:
-            version = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
-                                     capture_output=True, text=True, timeout=3)
+            version = subprocess.run(
+                ["git", "-C", str(root), "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
             if version.returncode == 0:
                 commit = version.stdout.strip()
         except (OSError, subprocess.TimeoutExpired) as error:
             sys.stderr.write(f"release: cannot read the source commit: {error}\n")
         (stage / "release-metadata.json").write_text(
-            json.dumps({"schema_version": 1, "source_commit": commit,
-                        "platform": platform, "windows_wizard": windows,
-                        "dxvk": (root / "work/dxvk/VERSION").read_text(encoding="utf-8").strip()
-                        if windows else None}, indent=2) + "\n",
-            encoding="utf-8")
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "source_commit": commit,
+                    "platform": platform,
+                    "windows_wizard": windows,
+                    "dxvk": (root / "work/dxvk/VERSION").read_text(encoding="utf-8").strip()
+                    if windows
+                    else None,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         (stage / "setup.sh").chmod(0o755)
         for name in ("LICENSE", "NOTICE"):
             shutil.copy2(root / name, stage / name)
@@ -146,8 +230,11 @@ def assemble(root: Path, target: Path, platform: str) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path, help="new or empty release directory")
-    parser.add_argument("--platform", choices=("linux", "windows"),
-                        default="windows" if os.name == "nt" else "linux")
+    parser.add_argument(
+        "--platform",
+        choices=("linux", "windows"),
+        default="windows" if os.name == "nt" else "linux",
+    )
     args = parser.parse_args()
     try:
         target = assemble(ROOT, args.output, args.platform)

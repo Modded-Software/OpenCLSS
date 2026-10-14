@@ -12,6 +12,7 @@ is that nobody's home directory, mail address or game library comes along either
 The patterns are shapes, not names: this file is published too, and a check that spelled
 out the thing it was hiding would be the leak.
 """
+
 import pathlib
 import re
 import subprocess
@@ -22,11 +23,40 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 # Extensions that are either the vendor's property, derived from it, or somebody else's
 # copyrighted frames. None of them has any business in a source tree.
 FORBIDDEN_SUFFIXES = {
-    ".dll", ".exe", ".sys", ".so", ".dylib", ".spv", ".air", ".metallib", ".dxil", ".cso",
-    ".cubin", ".ptx", ".fatbin",
-    ".safetensors", ".pt", ".pth", ".onnx", ".gguf", ".bin", ".npy", ".npz",
-    ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".mp4", ".webm",
-    ".7z", ".zip", ".zst", ".tar", ".gz",
+    ".dll",
+    ".exe",
+    ".sys",
+    ".so",
+    ".dylib",
+    ".spv",
+    ".air",
+    ".metallib",
+    ".dxil",
+    ".cso",
+    ".cubin",
+    ".ptx",
+    ".fatbin",
+    ".safetensors",
+    ".pt",
+    ".pth",
+    ".onnx",
+    ".gguf",
+    ".bin",
+    ".npy",
+    ".npz",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".bmp",
+    ".gif",
+    ".mp4",
+    ".webm",
+    ".7z",
+    ".zip",
+    ".zst",
+    ".tar",
+    ".gz",
 }
 LARGE = 200 * 1024
 
@@ -52,12 +82,16 @@ DELIBERATE_PREFIXES = ("comparisons/",)
 def deliberate(path):
     return path in DELIBERATE or path.startswith(DELIBERATE_PREFIXES)
 
+
 PATTERNS = (
     ("a home directory", re.compile(rb"/home/[A-Za-z0-9._-]+/")),
     ("a mail address", re.compile(rb"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")),
     ("a mounted volume", re.compile(rb"/(?:mnt|media|run/media)/[A-Za-z0-9._-]+/")),
     ("a private key", re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
-    ("an API token", re.compile(rb"\b(?:ghp|gho|github_pat|sk-[A-Za-z0-9]{20}|AKIA)[A-Za-z0-9_]{10,}")),
+    (
+        "an API token",
+        re.compile(rb"\b(?:ghp|gho|github_pat|sk-[A-Za-z0-9]{20}|AKIA)[A-Za-z0-9_]{10,}"),
+    ),
 )
 # The one place a mail address is legitimate: git's own trailers, which are part of how
 # the commits were made and are already public in every clone.
@@ -71,21 +105,24 @@ WEB = re.compile(rb"https?://[^\s)>\]\"'`]+")
 def in_web_address(blob, start):
     line_start = blob.rfind(b"\n", 0, start) + 1
     line_end = blob.find(b"\n", start)
-    line = blob[line_start:line_end if line_end >= 0 else len(blob)]
+    line = blob[line_start : line_end if line_end >= 0 else len(blob)]
     offset = start - line_start
     return any(m.start() <= offset < m.end() for m in WEB.finditer(line))
 
 
 # Addresses that are meant to be public: the trailer git itself writes, and the address
 # GitHub hands out precisely so a personal one need not be published.
-ALLOWED = re.compile(rb"noreply@anthropic\.com|@users\.noreply\.github\.com"
-                     rb"|^noreply@github\.com$")
+ALLOWED = re.compile(
+    rb"noreply@anthropic\.com|@users\.noreply\.github\.com"
+    rb"|^noreply@github\.com$"
+)
 
 
 def tracked():
     try:
-        got = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z"],
-                             capture_output=True, check=True)
+        got = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, check=True
+        )
     except subprocess.CalledProcessError as error:
         raise RuntimeError(f"git ls-files failed: {error.stderr!r}") from error
     return [name for name in got.stdout.split(b"\0") if name]
@@ -118,8 +155,12 @@ def history():
     """
     names = {}
     try:
-        listed = subprocess.run(["git", "-C", str(ROOT), "rev-list", "--objects", "--all"],
-                                capture_output=True, text=True, check=True)
+        listed = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-list", "--objects", "--all"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
     except subprocess.CalledProcessError as error:
         raise RuntimeError(f"git rev-list failed: {error.stderr}") from error
     for row in listed.stdout.splitlines():
@@ -129,9 +170,18 @@ def history():
 
     try:
         catalogue = subprocess.run(
-            ["git", "-C", str(ROOT), "cat-file", "--batch-all-objects",
-             "--batch-check=%(objectname) %(objecttype) %(objectsize)"],
-            capture_output=True, text=True, check=True)
+            [
+                "git",
+                "-C",
+                str(ROOT),
+                "cat-file",
+                "--batch-all-objects",
+                "--batch-check=%(objectname) %(objecttype) %(objectsize)",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
     except subprocess.CalledProcessError as error:
         raise RuntimeError(f"git cat-file failed: {error.stderr}") from error
     wanted = []
@@ -153,14 +203,17 @@ def history():
 
     if wanted:
         sys.stderr.write(f"[publish-check] reading {len(wanted)} historical blobs\n")
-        reader = subprocess.Popen(["git", "-C", str(ROOT), "cat-file", "--batch"],
-                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        reader = subprocess.Popen(
+            ["git", "-C", str(ROOT), "cat-file", "--batch"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+        )
         blobs, _ = reader.communicate(b"".join(f"{name}\n".encode() for name, _ in wanted))
         offset = 0
         for name, where in wanted:
             end = blobs.index(b"\n", offset)
             size = int(blobs[offset:end].split()[2])
-            blob = blobs[end + 1:end + 1 + size]
+            blob = blobs[end + 1 : end + 1 + size]
             offset = end + 1 + size + 1
             for what, pattern in PATTERNS:
                 for hit in pattern.finditer(blob):
@@ -185,7 +238,10 @@ def authorship():
     try:
         got = subprocess.run(
             ["git", "-C", str(ROOT), "log", "--all", "--format=%H%x00%ae%x00%ce"],
-            capture_output=True, text=True, check=True)
+            capture_output=True,
+            text=True,
+            check=True,
+        )
     except subprocess.CalledProcessError as error:
         raise RuntimeError(f"git log failed: {error.stderr}") from error
     seen = {}
@@ -199,15 +255,20 @@ def authorship():
             if ALLOWED.search(address.encode()):
                 continue
             seen.setdefault(address, parts[0])
-    return [f"authorship: {address} - {count_commits(address)} commit(s), first {sha[:9]}"
-            for address, sha in sorted(seen.items())]
+    return [
+        f"authorship: {address} - {count_commits(address)} commit(s), first {sha[:9]}"
+        for address, sha in sorted(seen.items())
+    ]
 
 
 def count_commits(address):
     try:
         got = subprocess.run(
             ["git", "-C", str(ROOT), "log", "--all", "--format=%ae %ce"],
-            capture_output=True, text=True, check=True)
+            capture_output=True,
+            text=True,
+            check=True,
+        )
     except subprocess.CalledProcessError as error:
         raise RuntimeError(f"git log failed: {error.stderr}") from error
     return sum(1 for row in got.stdout.splitlines() if address in row)

@@ -12,23 +12,24 @@ Usage:
   ptx_trace.py <entry> --reg %rd7 [--depth N]    what consumes this register?
   ptx_trace.py <entry> --consumers mma           which registers reach an mma operand?
 """
+
 import glob
 import re
 import sys
 from collections import defaultdict
 
-REG = re.compile(r'%\w+')
+REG = re.compile(r"%\w+")
 
 
 def body(entry, root="work/modules/*.ptx"):
     for p in sorted(glob.glob(root)):
         txt = open(p, encoding="utf-8", errors="replace").read()
-        m = re.search(r'^\.visible \.entry ' + re.escape(entry) + r'\(', txt, re.M)
+        m = re.search(r"^\.visible \.entry " + re.escape(entry) + r"\(", txt, re.MULTILINE)
         if not m:
             continue
         s = m.start()
-        nxt = re.search(r'^\.(visible \.entry|func |visible \.func)', txt[s + 40:], re.M)
-        return p, (txt[s: s + 40 + nxt.start()] if nxt else txt[s:])
+        nxt = re.search(r"^\.(visible \.entry|func |visible \.func)", txt[s + 40 :], re.MULTILINE)
+        return p, (txt[s : s + 40 + nxt.start()] if nxt else txt[s:])
     return None, None
 
 
@@ -71,10 +72,21 @@ def statements(src):
     return [(t.strip(), sc) for t, sc in out if t.strip()]
 
 
-LOCAL = re.compile(r'(?<![%\w.$])([a-zA-Z_]\w*)(?![\w.(])')
-DECL = re.compile(r'^\.reg\s*\.\w+\s+(.*)$')     # `.reg .f32 x` and `.reg.b16 x` both occur
-LABEL = re.compile(r'^[\$\w]+:\s*')
-STORE = ("st", "red", "atom", "bar", "mbarrier", "cp.", "sust", "ret", "bra", "prefetch")
+LOCAL = re.compile(r"(?<![%\w.$])([a-zA-Z_]\w*)(?![\w.(])")
+DECL = re.compile(r"^\.reg\s*\.\w+\s+(.*)$")  # `.reg .f32 x` and `.reg.b16 x` both occur
+LABEL = re.compile(r"^[\$\w]+:\s*")
+STORE = (
+    "st",
+    "red",
+    "atom",
+    "bar",
+    "mbarrier",
+    "cp.",
+    "sust",
+    "ret",
+    "bra",
+    "prefetch",
+)
 
 
 def split_operands(rest):
@@ -86,7 +98,8 @@ def split_operands(rest):
         elif ch in "}]":
             depth -= 1
         if ch == "," and depth == 0:
-            ops.append("".join(cur)); cur = []
+            ops.append("".join(cur))
+            cur = []
         else:
             cur.append(ch)
     if "".join(cur).strip():
@@ -103,15 +116,18 @@ def parse(src):
             continue
         m = DECL.match(text)
         if m:
-            for nm in re.split(r'[,\s]+', m.group(1)):
+            for nm in re.split(r"[,\s]+", m.group(1)):
                 nm = nm.split("<")[0].strip()
                 if nm:
-                    locals_by_scope.setdefault(scope, {})[nm] = "%%__s%d_%s" % (scope[-1] if scope else 0, nm)
+                    locals_by_scope.setdefault(scope, {})[nm] = "%%__s%d_%s" % (
+                        scope[-1] if scope else 0,
+                        nm,
+                    )
             continue
         if text.startswith("."):
             continue
-        text = re.sub(r'^@!?%\w+\s+', '', text).strip()
-        m = re.match(r'([a-z][\w.:]*)\s*(.*)$', text, re.S)
+        text = re.sub(r"^@!?%\w+\s+", "", text).strip()
+        m = re.match(r"([a-z][\w.:]*)\s*(.*)$", text, re.DOTALL)
         if not m:
             continue
         op, rest = m.group(1), m.group(2)
@@ -130,17 +146,20 @@ def parse(src):
         else:
             dests = REG.findall(ops[0])
             srcs = REG.findall(",".join(ops[1:]))
-            if ops[0].strip().startswith("["):     # dest is a memory ref: address is a source
+            if ops[0].strip().startswith("["):  # dest is a memory ref: address is a source
                 srcs, dests = dests + srcs, []
         out.append((len(out), op, dests, srcs, text))
     return out
 
 
 def chains(instrs):
-    defs = defaultdict(list); uses = defaultdict(list)
-    for i, op, d, s, _ in instrs:
-        for r in d: defs[r].append(i)
-        for r in s: uses[r].append(i)
+    defs = defaultdict(list)
+    uses = defaultdict(list)
+    for i, _op, d, s, _ in instrs:
+        for r in d:
+            defs[r].append(i)
+        for r in s:
+            uses[r].append(i)
     return defs, uses
 
 
@@ -152,14 +171,17 @@ def forward(instrs, defs, uses, seeds, depth=6, limit=400):
         nxt = set()
         for r in boundary:
             for i in uses.get(r, [])[:limit]:
-                if i in seen: continue
+                if i in seen:
+                    continue
                 seen.add(i)
-                _, op, d, s, line = instrs[i]
+                _, op, d, _s, line = instrs[i]
                 hit[(lvl, op)] += 1
-                if lvl <= 2: routes.append((lvl, line))
+                if lvl <= 2:
+                    routes.append((lvl, line))
                 nxt.update(d)
         boundary = nxt
-        if not boundary: break
+        if not boundary:
+            break
     return hit, routes
 
 
@@ -174,26 +196,31 @@ def coverage(src, instrs):
     directives = sum(1 for t in stmts if t.startswith("."))
     labels = sum(1 for t in stmts if LABEL.match(t) and not t.split(":", 1)[1].strip())
     unaccounted = len(stmts) - kept - directives - labels
-    return ("coverage: %d statements, %d parsed, %d directives, %d labels, %d unaccounted%s"
-            % (len(stmts), kept, directives, labels, unaccounted,
-               "  <-- CHECK THIS" if unaccounted > len(stmts) // 50 else ""))
+    return "coverage: %d statements, %d parsed, %d directives, %d labels, %d unaccounted%s" % (
+        len(stmts),
+        kept,
+        directives,
+        labels,
+        unaccounted,
+        "  <-- CHECK THIS" if unaccounted > len(stmts) // 50 else "",
+    )
 
 
 def main():
     entry = sys.argv[1]
     path, src = body(entry)
     if src is None:
-        sys.exit("entry %s not found" % entry)
+        sys.exit(f"entry {entry} not found")
     instrs = parse(src)
     defs, uses = chains(instrs)
     print("kernel %s   [%s]   %d instructions parsed" % (entry, path.split("/")[-1], len(instrs)))
-    print("  %s" % coverage(src, instrs))
+    print(f"  {coverage(src, instrs)}")
 
     seeds = []
     if "--param" in sys.argv:
         off = int(sys.argv[sys.argv.index("--param") + 1])
-        pat = re.compile(re.escape(entry) + r'_param_0(?:\+(\d+))?')
-        for i, op, d, s, line in instrs:
+        pat = re.compile(re.escape(entry) + r"_param_0(?:\+(\d+))?")
+        for _i, op, d, _s, line in instrs:
             m = pat.search(line)
             if m and int(m.group(1) or 0) == off:
                 seeds += d

@@ -16,18 +16,17 @@ script exits 0, the recovered layout is internally consistent for all 153 record
 Layouts come from notes/MODEL-SPEC.txt, notes/phase3-block-layout.md and
 notes/phase3-block-internals.md.
 """
+
 import re
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from hnet_weights import parse
 
 HEAD_DIM = 32
-TOKENS = 64          # 8x8 Swin window
+TOKENS = 64  # 8x8 Swin window
 
 FP16_MIN_NORMAL = 6.103515625e-05
 FP16_MAX = 65504.0
@@ -64,7 +63,7 @@ def is_gate(x):
     1.0 with sd as low as 0.012 (block43.layer3: min 0.911, mean 0.994), meaning
     those blocks pass their input through almost unchanged.
     """
-    return (x.size and x.min() >= -1.001 and x.max() <= 1.001 and x.mean() > 0.3)
+    return x.size and x.min() >= -1.001 and x.max() <= 1.001 and x.mean() > 0.3
 
 
 def fp32_pairs(a):
@@ -96,9 +95,9 @@ class Block:
         # as two FP16 slots. Deliberately NOT in `self.t`, so the parameter
         # accounting keeps counting stored elements exactly once.
         self.scale_f32 = None
-        self.out_head = None       # derived: the 32x4 output projection, unpadded
-        self.resample = None       # derived: the C x C resampling matrix, if any
-        self.resample_at = None    # "front" (upsample) or "back" (downsample)
+        self.out_head = None  # derived: the 32x4 output projection, unpadded
+        self.resample = None  # derived: the C x C resampling matrix, if any
+        self.resample_at = None  # "front" (upsample) or "back" (downsample)
 
     def put(self, name, arr, shape=None):
         self.t[name] = arr.reshape(shape) if shape else arr
@@ -106,8 +105,11 @@ class Block:
 
     def __repr__(self):
         return "block%-3d %-18s C=%-5d %s" % (
-            self.index, self.kind, self.C,
-            "  ".join("%s%s" % (k, tuple(v.shape)) for k, v in self.t.items()))
+            self.index,
+            self.kind,
+            self.C,
+            "  ".join(f"{k}{tuple(v.shape)}" for k, v in self.t.items()),
+        )
 
 
 class Model:
@@ -116,8 +118,7 @@ class Model:
         recs = parse(blob)
         raw = {}
         for t in recs:
-            raw[t["name"]] = np.frombuffer(blob, dtype="<f2",
-                                           count=t["n_elem"], offset=t["offset"])
+            raw[t["name"]] = np.frombuffer(blob, dtype="<f2", count=t["n_elem"], offset=t["offset"])
         by = defaultdict(dict)
         for name, a in raw.items():
             m = re.match(r"block(\d+)\.layer(\d+)\.(\w+)$", name)
@@ -141,70 +142,85 @@ class Model:
         a = subs[keys[0]]
         if a.size == 262656:
             b = Block(i, "dec_upsample", 1024)
-            b.put("weight", a[:512 * 512], (512, 512))
-            b.put("bias", a[512 * 512:])
+            b.put("weight", a[: 512 * 512], (512, 512))
+            b.put("bias", a[512 * 512 :])
             assert b.t["bias"].size == 512
             return b
         return self._fused_swin(i, a)
 
     def _split_swin(self, i, subs, C=512):
         b, H = Block(i, "split_swin_16h", C), C // HEAD_DIM
-        g = lambda n: subs[(n, "layer")]
+
+        def g(n):
+            return subs[(n, "layer")]
+
         b.put("proj", g(0), (C, C))
         for n, tag in ((1, "ffwd"), (3, "ffwd_proj")):
             a = g(n)
-            b.put(tag, a[:C * C // 2], (C, C // 2))
-            gate = b.put(tag + "_gate", a[C * C // 2:])
+            b.put(tag, a[: C * C // 2], (C, C // 2))
+            gate = b.put(tag + "_gate", a[C * C // 2 :])
             assert gate.size == C and is_gate(gate.astype(np.float32)), tag
         l2, q = g(2), 3 * C * C // 2
-        b.put("wq", l2[:C * C], (C, C))
-        b.put("wk", l2[C * C:C * C + C * C // 4], (C, C // 4))
-        b.put("wv", l2[C * C + C * C // 4:q], (C, C // 4))
-        b.put("attn_bias", l2[q:q + 128 * C], (H, TOKENS, TOKENS))
-        pairs = l2[q + 128 * C:]
-        b.put("attn_scale", pairs[1::2])     # the FP16 reading; kept for comparison
-        b.put("unknown_even", pairs[0::2])   # the low half of the FP32 -- not a weight
+        b.put("wq", l2[: C * C], (C, C))
+        b.put("wk", l2[C * C : C * C + C * C // 4], (C, C // 4))
+        b.put("wv", l2[C * C + C * C // 4 : q], (C, C // 4))
+        b.put("attn_bias", l2[q : q + 128 * C], (H, TOKENS, TOKENS))
+        pairs = l2[q + 128 * C :]
+        b.put("attn_scale", pairs[1::2])  # the FP16 reading; kept for comparison
+        b.put("unknown_even", pairs[0::2])  # the low half of the FP32 -- not a weight
         b.scale_f32 = fp32_pairs(pairs)
         assert b.t["attn_scale"].size == H
-        if (4, "layer") in subs:                      # block30 only
+        if (4, "layer") in subs:  # block30 only
             ex = subs[(4, "layer")]
             b.put("extra", ex)
             # 262,152 elements = 512^2 + 8: the 512->1024 downsample, the deepest of
             # the five U-Net levels. Same object as the encoder surplus in the fused
             # blocks, here carried as its own layer4 tensor.
             if ex.size >= C * C:
-                b.resample = ex[:C * C].astype(np.float32).reshape(C, C)
+                b.resample = ex[: C * C].astype(np.float32).reshape(C, C)
                 b.resample_at = "back"
         return b
 
     def _vit1d(self, i, subs, C=1024):
         b, H = Block(i, "vit_1d", C), C // HEAD_DIM
-        g = lambda n: subs[(n, "layer")]
-        a0 = g(0); b.put("ffn_expand", a0[:2 * C * C], (C, 2 * C)); b.put("ffn_expand_extra", a0[2 * C * C:])
-        a1 = g(1); b.put("ffn_contract", a1[:2 * C * C], (2 * C, C))
-        gate = b.put("ffn_gate", a1[2 * C * C:]); assert is_gate(gate.astype(np.float32))
+
+        def g(n):
+            return subs[(n, "layer")]
+
+        a0 = g(0)
+        b.put("ffn_expand", a0[: 2 * C * C], (C, 2 * C))
+        b.put("ffn_expand_extra", a0[2 * C * C :])
+        a1 = g(1)
+        b.put("ffn_contract", a1[: 2 * C * C], (2 * C, C))
+        gate = b.put("ffn_gate", a1[2 * C * C :])
+        assert is_gate(gate.astype(np.float32))
         a2 = g(2)
         b.put("attn_scale", a2[:64][1::2])
         b.put("unknown_even", a2[:64][0::2])
         b.scale_f32 = fp32_pairs(a2[:64])
         q = a2[64:]
-        b.put("wq", q[:C * C], (C, C))
-        b.put("wk", q[C * C:C * C + C * C // 4], (C, C // 4))
-        b.put("wv", q[C * C + C * C // 4:], (C, C // 4))
-        assert b.t["attn_scale"].size == H and b.t["wv"].size == C * C // 4
+        b.put("wq", q[: C * C], (C, C))
+        b.put("wk", q[C * C : C * C + C * C // 4], (C, C // 4))
+        b.put("wv", q[C * C + C * C // 4 :], (C, C // 4))
+        assert b.t["attn_scale"].size == H
+        assert b.t["wv"].size == C * C // 4
         b.put("scalar", g(3))
-        a4 = g(4); b.put("proj", a4[:C * C // 2], (C, C // 2))
-        gate = b.put("proj_gate", a4[C * C // 2:]); assert is_gate(gate.astype(np.float32))
+        a4 = g(4)
+        b.put("proj", a4[: C * C // 2], (C, C // 2))
+        gate = b.put("proj_gate", a4[C * C // 2 :])
+        assert is_gate(gate.astype(np.float32))
         return b
 
     # Measured leading-region length per stage width. C >= 64 follows 4C^2 + 64C;
     # C = 32 does not, and comes out at 5.5C^2 -- expected, because those blocks are
     # built from FusedSwin2d1HLayer rather than CrazyCuckooFusedSwin*, a different
     # class with its own layout. Bias is 128C at every width.
-    LEAD = {32: lambda C: 11 * C * C // 2,
-            64: lambda C: 4 * C * C + 64 * C,
-            128: lambda C: 4 * C * C + 64 * C,
-            256: lambda C: 4 * C * C + 64 * C}
+    LEAD = {
+        32: lambda C: 11 * C * C // 2,
+        64: lambda C: 4 * C * C + 64 * C,
+        128: lambda C: 4 * C * C + 64 * C,
+        256: lambda C: 4 * C * C + 64 * C,
+    }
 
     # The five U-Net levels each carry a resampling matrix, found the same way as the
     # stem and the head -- by the surplus over a standard block of the same width.
@@ -254,11 +270,11 @@ class Model:
         qkv_n = 3 * C * C // 2
         cut = lead - qkv_n
         e = cut
-        while e < len(f) and f[e] == 0.0:        # a few zero pad elements first
+        while e < len(f) and f[e] == 0.0:  # a few zero pad elements first
             e += 1
         W = 8
         gs = e
-        while e + W <= len(f) and is_gate(f[e:e + W]):
+        while e + W <= len(f) and is_gate(f[e : e + W]):
             e += W
         # The leading region is 2.5C^2 + 64C. Its sub-roles are not established, but
         # the first C^2 is exposed as `pre_proj` because these blocks otherwise have
@@ -266,38 +282,42 @@ class Model:
         # for one. Treated as a hypothesis and measured, not assumed.
         pre = a[:cut]
         if pre.size >= 2 * C * C:
-            b.put("pre_proj", pre[:C * C].reshape(C, C))
-            b.put("pre_ffn0", pre[C * C: C * C + C * C // 2].reshape(C, C // 2))
-            b.put("pre_ffn1", pre[C * C + C * C // 2: 2 * C * C].reshape(C // 2, C))
-            b.put("pre_rest", pre[2 * C * C:])
+            b.put("pre_proj", pre[: C * C].reshape(C, C))
+            b.put("pre_ffn0", pre[C * C : C * C + C * C // 2].reshape(C, C // 2))
+            b.put("pre_ffn1", pre[C * C + C * C // 2 : 2 * C * C].reshape(C // 2, C))
+            b.put("pre_rest", pre[2 * C * C :])
         else:
             b.put("pre", pre)
         b.put("gate", a[gs:e])
-        qkv = a[e:e + qkv_n]
+        qkv = a[e : e + qkv_n]
         bias_at = e + qkv_n
         # Q/K/V split is GQA 4:1 -- only exact when C/4 is a whole number of
         # 32-channel heads, i.e. C >= 128. The narrow stages use FusedSwin2d1HLayer /
         # CrazyCuckooFusedSwin2d2HLayer, different classes with an undetermined split,
         # so no shapes are invented for them.
         if C >= 128 and qkv.size == qkv_n:
-            b.put("wq", qkv[:C * C], (C, C))
-            b.put("wk", qkv[C * C:C * C + C * C // 4], (C, C // 4))
-            b.put("wv", qkv[C * C + C * C // 4:], (C, C // 4))
+            b.put("wq", qkv[: C * C], (C, C))
+            b.put("wk", qkv[C * C : C * C + C * C // 4], (C, C // 4))
+            b.put("wv", qkv[C * C + C * C // 4 :], (C, C // 4))
         else:
-            b.put("qkv", qkv)               # split undetermined at this width
-        b.put("attn_bias", a[bias_at:bias_at + 128 * C], (H, TOKENS, TOKENS))
-        b.put("tail", a[bias_at + 128 * C:])
+            b.put("qkv", qkv)  # split undetermined at this width
+        b.put("attn_bias", a[bias_at : bias_at + 128 * C], (H, TOKENS, TOKENS))
+        b.put("tail", a[bias_at + 128 * C :])
         b.put("pad", a[cut:gs])
         if i in self.DOWNSAMPLE:
-            b.resample = a_full[-C * C:].astype(np.float32).reshape(C, C)
+            b.resample = a_full[-C * C :].astype(np.float32).reshape(C, C)
             b.resample_at = "back"
         elif i in self.UPSAMPLE:
-            b.resample = a_full[:C * C].astype(np.float32).reshape(C, C)
+            b.resample = a_full[: C * C].astype(np.float32).reshape(C, C)
             b.resample_at = "front"
         if stem is not None:
             b.put("input_adapter", stem, (16, 32))
         placed = sum(v.size for v in b.t.values())
-        assert placed == a_full.size, "block%d does not close: %d vs %d" % (i, placed, a_full.size)
+        assert placed == a_full.size, "block%d does not close: %d vs %d" % (
+            i,
+            placed,
+            a_full.size,
+        )
         return b
 
     def _output_head(self, i, subs):
@@ -315,7 +335,7 @@ class Model:
         b.put("weights", a[:-512])
         head = a[-512:].reshape(64, 8)
         b.put("out_head_padded", a[-512:], (64, 8))
-        b.out_head = head[:32, :4].astype(np.float32)      # derived, not stored
+        b.out_head = head[:32, :4].astype(np.float32)  # derived, not stored
         b.put("blend_scale", subs[(0, "blend_scale")])
         return b
 
@@ -333,9 +353,13 @@ def main():
     print("\n  ... %d blocks total\n" % len(m.blocks))
     for k, v in sorted(kinds.items()):
         print("  %-18s x%d" % (k, v))
-    print("\n  parameters placed %s of %s   -> %s"
-          % (format(placed, ","), format(m.n_params, ","),
-             "ALL ACCOUNTED" if placed == m.n_params else "MISSING %d" % (m.n_params - placed)))
+    print(
+        "\n  parameters placed {} of {}   -> {}".format(
+            format(placed, ","),
+            format(m.n_params, ","),
+            "ALL ACCOUNTED" if placed == m.n_params else "MISSING %d" % (m.n_params - placed),
+        )
+    )
     return 0 if placed == m.n_params else 1
 
 

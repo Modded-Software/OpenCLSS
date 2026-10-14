@@ -11,28 +11,30 @@ the portable GEMM's packed A fetch (XMX_PORTABLE_PACKED, off by default and turn
 beside the staged switch), which is what the shapes below then exercise; there the
 staged-kernel checks at the end do not apply.
 """
+
 import argparse
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 import numpy as np
 
+import nr_build
+
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src"))
-import nr_build  # noqa: E402
 
 FILL = -123.125
 GUARD = 64
 
 
 def worker(destination):
-    import xmxres as X
+    from xmxrt import gemm, memory, profile
+    from xmxrt.recorder import Recorder
 
-    rt = X.Runtime()
-    X.profile(True)
+    rt = Recorder()
+    profile.profile(True)
     # a staged kernel to route to: not without matrix units, nor on Direct3D 12
     staged = not rt.lib.xmx_portable() and bool(rt.lib.xmx_window_gather())
     # the switch the worker was started under must be the one the runtime took
@@ -41,7 +43,10 @@ def worker(destination):
         assert rt.lib.xmx_staged_packed() == want, (rt.lib.xmx_staged_packed(), want)
     else:
         want = int(os.environ.get("XMX_PORTABLE_PACKED", "0"))
-        assert rt.lib.xmx_portable_packed() == want, (rt.lib.xmx_portable_packed(), want)
+        assert rt.lib.xmx_portable_packed() == want, (
+            rt.lib.xmx_portable_packed(),
+            want,
+        )
     rng = np.random.default_rng(81723)
     results = {}
     families = set()
@@ -82,66 +87,115 @@ def worker(destination):
                 for item in range(batch):
                     for row in range(m):
                         start = oc + item * sc + row * ldc
-                        written[start:start + n] = True
+                        written[start : start + n] = True
                 try:
                     for change in range(2):
-                        for buf, size in ((a, batch * sa + GUARD), (b, batch * sb + GUARD)):
-                            X.host_write(buf, rng.normal(0, .2 + .1 * change, size).astype(np.float16))
+                        for buf, size in (
+                            (a, batch * sa + GUARD),
+                            (b, batch * sb + GUARD),
+                        ):
+                            memory.host_write(
+                                buf,
+                                rng.normal(0, 0.2 + 0.1 * change, size).astype(np.float16),
+                            )
                         for epilogue in range(5):
                             for narrow, c in enumerate(outputs):
                                 dtype = np.float16 if narrow else np.float32
-                                X.host_write(c, np.full(count, FILL, dtype))
-                                X.profile_reset()
+                                memory.host_write(c, np.full(count, FILL, dtype))
+                                profile.profile_reset()
                                 rt.begin()
-                                rt.gemm(a, b, c, m, n, k, batch=batch, transpose_b=transposed,
-                                        leading=(lda, ldb, ldc), strides=(sa, sb, sc),
-                                        offsets=(oa, ob, oc), epilogue=epilogue, narrow=bool(narrow))
+                                gemm.gemm(
+                                    rt,
+                                    a,
+                                    b,
+                                    c,
+                                    m,
+                                    n,
+                                    k,
+                                    batch=batch,
+                                    transpose_b=transposed,
+                                    leading=(lda, ldb, ldc),
+                                    strides=(sa, sb, sc),
+                                    offsets=(oa, ob, oc),
+                                    epilogue=epilogue,
+                                    narrow=bool(narrow),
+                                )
                                 rt.submit()
-                                families.update(int(kind) // 32 for kind in X.profile_each_kinds())
-                                values = X.host_view(c, dtype).copy()
-                                key = f'{specialization}/{case}/{int(transposed)}/{change}/{epilogue}/{narrow}'
-                                assert np.all(values[~written] == FILL), (key, 'guard overwritten')
-                                assert np.isfinite(values[written]).all(), (key, 'nonfinite output')
-                                assert np.all(values[written] != FILL), (key, 'unwritten output')
+                                families.update(
+                                    int(kind) // 32 for kind in profile.profile_each_kinds()
+                                )
+                                values = memory.host_view(c, dtype).copy()
+                                key = f"{specialization}/{case}/{int(transposed)}/{change}/{epilogue}/{narrow}"
+                                assert np.all(values[~written] == FILL), (
+                                    key,
+                                    "guard overwritten",
+                                )
+                                assert np.isfinite(values[written]).all(), (
+                                    key,
+                                    "nonfinite output",
+                                )
+                                assert np.all(values[written] != FILL), (
+                                    key,
+                                    "unwritten output",
+                                )
                                 results[key] = values.view(np.uint8)
                 finally:
                     for buf in (a, b, *outputs):
                         buf.free()
-        print(f'mask {specialization}: {len(results)} outputs, guards intact', flush=True)
+        print(f"mask {specialization}: {len(results)} outputs, guards intact", flush=True)
     if staged:
-        assert families == {2}, f'calls bypassed the staged kernel: {families}'
-        assert rt.lib.xmx_staged32_calls() > 0, '32-row variants were not exercised'
+        assert families == {2}, f"calls bypassed the staged kernel: {families}"
+        assert rt.lib.xmx_staged32_calls() > 0, "32-row variants were not exercised"
     else:
-        print('no staged kernel on this runtime: the portable GEMM\'s packed A fetch was '
-              f'under test (pass families {sorted(families)})', flush=True)
+        print(
+            "no staged kernel on this runtime: the portable GEMM's packed A fetch was "
+            f"under test (pass families {sorted(families)})",
+            flush=True,
+        )
     np.savez(destination, **results)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--worker', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--worker", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.worker:
         worker(args.worker)
         return
     nr_build.BUILD_DIR.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='staged-packed-', dir=nr_build.BUILD_DIR) as folder:
-        archives = [Path(folder) / f'{mode}.npz' for mode in (0, 1)]
+    with tempfile.TemporaryDirectory(prefix="staged-packed-", dir=nr_build.BUILD_DIR) as folder:
+        archives = [Path(folder) / f"{mode}.npz" for mode in (0, 1)]
         for mode, archive in enumerate(archives):
             env = dict(os.environ)
-            for name in ('XMX_STAGED_SPV', 'XMX_STAGED32_SPV', 'XMX_STAGED32_DEEP_SPV'):
+            for name in ("XMX_STAGED_SPV", "XMX_STAGED32_SPV", "XMX_STAGED32_DEEP_SPV"):
                 env.pop(name, None)
-            env.update(XMX_STAGED_PACKED=str(mode), XMX_PORTABLE_PACKED=str(mode), XMX_STAGE_K='32',
-                       XMX_STAGED32='1', XMX_STAGED_PARTIAL='1', PYTHONUTF8='1',
-                       NR_BUILD_DIR=str(nr_build.BUILD_DIR))
-            subprocess.run([sys.executable, str(Path(__file__).resolve()), '--worker', str(archive)],
-                           env=env, cwd=ROOT, check=True, timeout=120)
+            env.update(
+                XMX_STAGED_PACKED=str(mode),
+                XMX_PORTABLE_PACKED=str(mode),
+                XMX_STAGE_K="32",
+                XMX_STAGED32="1",
+                XMX_STAGED_PARTIAL="1",
+                PYTHONUTF8="1",
+                NR_BUILD_DIR=str(nr_build.BUILD_DIR),
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "--worker",
+                    str(archive),
+                ],
+                env=env,
+                cwd=ROOT,
+                check=True,
+                timeout=120,
+            )
         with np.load(archives[0]) as old, np.load(archives[1]) as packed:
             assert old.files == packed.files
             for name in old.files:
                 np.testing.assert_array_equal(old[name], packed[name], err_msg=name)
-            print(f'{len(old.files)} packed-loader outputs byte-identical')
+            print(f"{len(old.files)} packed-loader outputs byte-identical")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

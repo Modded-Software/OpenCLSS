@@ -5,13 +5,10 @@ Same ctypes harness as opencl_gemm8_slm.py; the kernel under test is the staged 
 rather than the staged DPAS one. Compare against the shipping scalar FMA kernel with
 gemm_sustained.py on the same shapes.
 """
+
 import argparse
 import pathlib
-import sys
 
-import numpy as np
-
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import opencl_gemm8_slm as H
 
 
@@ -33,12 +30,40 @@ def main():
         raise SystemExit(f"shape not divisible by BM={args.bm} BN={args.bn} BK={args.bk}")
     if args.bm % (8 * args.rm) or args.bn % (8 * args.rn):
         raise SystemExit("BM/BN not divisible by 8*RM / 8*RN")
-    rate, ms, errp = H.measure(device, context, M, N, K, args.bm, args.bn, args.bk,
-                               args.rm, args.rn, source, check=args.check)
+    rate, ms, errp = H.measure(
+        device,
+        context,
+        M,
+        N,
+        K,
+        args.bm,
+        args.bn,
+        args.bk,
+        args.rm,
+        args.rn,
+        source,
+        check=args.check,
+    )
     wgs = 8 * (args.bm // (8 * args.rm)) * (args.bn // (8 * args.rn))
-    print("  %dx%dx%d  WG %dx%dx%d  SGM=%d SGN=%d WGS=%d RMxRN=%dx%d : %.1f GFLOP/s  %.4f ms  rel err %.2e"
-          % (M, N, K, args.bm, args.bn, args.bk, args.bm // (8 * args.rm),
-             args.bn // (8 * args.rn), wgs, args.rm, args.rn, rate, ms, errp))
+    print(
+        "  %dx%dx%d  WG %dx%dx%d  SGM=%d SGN=%d WGS=%d RMxRN=%dx%d : %.1f GFLOP/s  %.4f ms  rel err %.2e"
+        % (
+            M,
+            N,
+            K,
+            args.bm,
+            args.bn,
+            args.bk,
+            args.bm // (8 * args.rm),
+            args.bn // (8 * args.rn),
+            wgs,
+            args.rm,
+            args.rn,
+            rate,
+            ms,
+            errp,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -22,20 +22,20 @@ climbing through the first frames, and five timed 320x320 frames after one warm 
 31.7 ms of device time where thirty warm frames first read 24.4. Compare across machines
 warm.
 """
+
 import argparse
 import pathlib
 import re
-import sys
 import time
 
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src" / "gpu"))
-sys.path.insert(0, str(ROOT / "src" / "ref"))
 import nr_frame_resident as F
 import nr_model
-import xmxres
+from xmxrt import profile
+from xmxrt.recorder import Recorder
+
 
 # Both tables are read from the shaders rather than written out here: a hand-kept
 # copy mislabels every row the moment a kind is added, and this file
@@ -44,8 +44,7 @@ def _kinds(path, pattern):
     # encoding is explicit: the shaders are not ASCII, and on Windows the default is
     # the ANSI code page rather than UTF-8.
     text = (ROOT / path).read_text(encoding="utf-8")
-    return {int(v): n.lower().replace("_", " ")
-            for n, v in re.findall(pattern, text)}
+    return {int(v): n.lower().replace("_", " ") for n, v in re.findall(pattern, text)}
 
 
 UNARY = _kinds("src/gpu/resident.comp", r"([A-Z][A-Z0-9_]*)\s*=\s*(\d+)u")
@@ -57,24 +56,28 @@ _WINDOW = _kinds("src/gpu/window_attention.comp", r"(WINDOW_[A-Z0-9_]*)\s*=\s*(\
 _BLOCK = _kinds("src/gpu/window_block.comp", r"(WINDOW_BLOCK)\s*=\s*(\d+)u")
 _GLOBAL = _kinds("src/gpu/global_attention.comp", r"(GLOBAL_ATTENTION)\s*=\s*(\d+)u")
 if set(_WINDOW) & set(_BLOCK) or set(_GLOBAL) & (set(_WINDOW) | set(_BLOCK)):
-    raise SystemExit("row profile kinds collide between window_attention.comp, "
-                     "window_block.comp and global_attention.comp")
+    raise SystemExit(
+        "row profile kinds collide between window_attention.comp, "
+        "window_block.comp and global_attention.comp"
+    )
 _WINDOW.update(_BLOCK)
 _WINDOW.update(_GLOBAL)
 _CLASH = set(ROW) & set(_WINDOW)
 if _CLASH:
-    raise SystemExit(f"row profile kinds collide between attention.comp and "
-                     f"window_attention.comp: {sorted(_CLASH)}")
+    raise SystemExit(
+        f"row profile kinds collide between attention.comp and "
+        f"window_attention.comp: {sorted(_CLASH)}"
+    )
 ROW.update(_WINDOW)
 
 
 def label(family, sub):
     if family == "unary":
-        return "unary: %s" % UNARY.get(sub, "kind %d" % sub)
+        return "unary: {}".format(UNARY.get(sub, "kind %d" % sub))
     if family == "row":
-        return "row: %s" % ROW.get(sub, "kind %d" % sub)
+        return "row: {}".format(ROW.get(sub, "kind %d" % sub))
     if family == "gemm" and sub == 31:
-        return "ffn fused"          # libxmx stamps the fused feed-forward as kind 31
+        return "ffn fused"  # libxmx stamps the fused feed-forward as kind 31
     if family.startswith("gemm"):
         return "%s (flags %d)" % (family, sub)
     return family
@@ -84,7 +87,13 @@ def _describe(name, args):
     """One recorded pass, as the entry point and the arguments that shape it."""
     if name == "xmx_rec_gemm":
         m, n, k, batch, bt = args[3], args[4], args[5], args[6], args[10]
-        return "gemm %dx%dx%d%s flags %#x" % (m, n, k, " x%d" % batch if batch > 1 else "", bt)
+        return "gemm %dx%dx%d%s flags %#x" % (
+            m,
+            n,
+            k,
+            " x%d" % batch if batch > 1 else "",
+            bt,
+        )
     if name == "xmx_rec_gemm_residual":
         return "gemm+residual %dx%dx%d flags %#x" % args[5:9]
     if name == "xmx_rec_gemm_window_residual_pool":
@@ -97,45 +106,84 @@ def _describe(name, args):
     if name == "xmx_rec_gemm_qkv_window":
         m, c = args[6], args[7]
         return "gemm+qkv epilogue %dx%dx%d, window gather%s%s" % (
-            m, 3 * c, c, " (half image)" if args[14] & 1 else "",
-            " (published)" if args[14] & 2 else "")
+            m,
+            3 * c,
+            c,
+            " (half image)" if args[14] & 1 else "",
+            " (published)" if args[14] & 2 else "",
+        )
     if name == "xmx_rec_ffn":
-        return "ffn fused %dx%dx%d x%d flags %#x" % (args[6], args[7], args[8], args[9], args[10])
+        return "ffn fused %dx%dx%d x%d flags %#x" % (
+            args[6],
+            args[7],
+            args[8],
+            args[9],
+            args[10],
+        )
     if name == "xmx_rec_ffn_merge":
         return "ffn fused %dx32x128, input merged from %dx%d" % (
-            args[7] * args[8], args[7] // 2, args[9])
+            args[7] * args[8],
+            args[7] // 2,
+            args[9],
+        )
     if name == "xmx_rec_ffn_stem":
         return "ffn fused %dx32x128, stem made from the features" % args[6]
     if name == "xmx_rec_window_block":
-        return "window block %d windows%s%s" % (args[8], ", half image" if args[13] & 0x8000 else "",
-                                                ", pooled" if args[13] & 0x800000 else "")
+        return "window block %d windows%s%s" % (
+            args[8],
+            ", half image" if args[13] & 0x8000 else "",
+            ", pooled" if args[13] & 0x800000 else "",
+        )
     if name == "xmx_rec_gemm_dual":
         return "gemm+half copy %dx%dx%d" % args[4:7]
     if name == "xmx_rec_unary2":
         return "unary %s n=%d C=%d, two outputs" % (
-            UNARY.get(args[0] & 0xFF, "kind %d" % (args[0] & 0xFF)), args[6], args[7])
+            UNARY.get(args[0] & 0xFF, "kind %d" % (args[0] & 0xFF)),
+            args[6],
+            args[7],
+        )
     if name == "xmx_rec_unary":
-        return "unary %s n=%d C=%d" % (UNARY.get(args[0] & 0xFF, "kind %d" % (args[0] & 0xFF)),
-                                       args[5], args[6])
+        return "unary %s n=%d C=%d" % (
+            UNARY.get(args[0] & 0xFF, "kind %d" % (args[0] & 0xFF)),
+            args[5],
+            args[6],
+        )
     if name == "xmx_rec_row":
-        return "row %s rows=%d" % (ROW.get(args[0] & 0xFF, "kind %d" % (args[0] & 0xFF)), args[5])
+        return "row %s rows=%d" % (
+            ROW.get(args[0] & 0xFF, "kind %d" % (args[0] & 0xFF)),
+            args[5],
+        )
     if name == "xmx_rec_global_attention":
         return "global attention %d rows, %d tokens, %d heads" % args[4:7]
     if name == "xmx_rec_window_attention":
         return "window attention %d batches, %d heads%s" % (
-            args[5], args[6], ", merged" if len(args) > 7 and args[7] else "")
-    return name[len("xmx_rec_"):]
+            args[5],
+            args[6],
+            ", merged" if len(args) > 7 and args[7] else "",
+        )
+    return name[len("xmx_rec_") :]
 
 
 def record_calls(lib):
     """Label every pass as it is recorded. Each `xmx_rec_*` entry point stamps exactly one
-    pass, so the labels line up one for one with `xmxres.profile_each()`."""
+    pass, so the labels line up one for one with `profile.profile_each()`."""
     log = []
     for name in [n for n in dir(lib) if n.startswith("xmx_rec_")] + [
-            n for n in ("xmx_rec_gemm", "xmx_rec_gemm_residual", "xmx_rec_gemm_window_residual",
-                        "xmx_rec_gemm_qkv", "xmx_rec_unary", "xmx_rec_row", "xmx_rec_qkv",
-                        "xmx_rec_window_attention", "xmx_rec_copy", "xmx_rec_history")
-            if n not in dir(lib)]:
+        n
+        for n in (
+            "xmx_rec_gemm",
+            "xmx_rec_gemm_residual",
+            "xmx_rec_gemm_window_residual",
+            "xmx_rec_gemm_qkv",
+            "xmx_rec_unary",
+            "xmx_rec_row",
+            "xmx_rec_qkv",
+            "xmx_rec_window_attention",
+            "xmx_rec_copy",
+            "xmx_rec_history",
+        )
+        if n not in dir(lib)
+    ]:
         real = getattr(lib, name)
 
         def call(*args, _real=real, _name=name):
@@ -143,6 +191,7 @@ def record_calls(lib):
             if status == 0:
                 log.append(_describe(_name, args))
             return status
+
         setattr(lib, name, call)
     return log
 
@@ -150,20 +199,41 @@ def record_calls(lib):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--size", nargs=2, type=int, default=(768, 1280))
-    parser.add_argument("--runs", type=int, default=12, metavar="N",
-                        help="timed frames; 12 is slow enough to average, short enough to "
-                             "iterate (the GPU is shared, so long runs drift)")
-    parser.add_argument("--tables", action="store_true",
-                        help="print the kind tables read from the shaders and stop; `make test` "
-                             "runs this, so a kind two shaders share fails there, not at the "
-                             "next profile")
-    parser.add_argument("--calls", type=int, default=0, metavar="N",
-                        help="also list the N most expensive call sites")
-    parser.add_argument("--seconds", type=float, default=0.5, metavar="S",
-                        help="warm up under load for S seconds first, so the GPU's clock has "
-                             "settled (the warm-up's first frame also records)")
-    parser.add_argument("--record", metavar="LABEL",
-                        help="append the result as one JSON line to notes/perf-log.jsonl")
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=12,
+        metavar="N",
+        help="timed frames; 12 is slow enough to average, short enough to "
+        "iterate (the GPU is shared, so long runs drift)",
+    )
+    parser.add_argument(
+        "--tables",
+        action="store_true",
+        help="print the kind tables read from the shaders and stop; `make test` "
+        "runs this, so a kind two shaders share fails there, not at the "
+        "next profile",
+    )
+    parser.add_argument(
+        "--calls",
+        type=int,
+        default=0,
+        metavar="N",
+        help="also list the N most expensive call sites",
+    )
+    parser.add_argument(
+        "--seconds",
+        type=float,
+        default=0.5,
+        metavar="S",
+        help="warm up under load for S seconds first, so the GPU's clock has "
+        "settled (the warm-up's first frame also records)",
+    )
+    parser.add_argument(
+        "--record",
+        metavar="LABEL",
+        help="append the result as one JSON line to notes/perf-log.jsonl",
+    )
     args = parser.parse_args()
     if args.tables:
         for family, table in (("unary", UNARY), ("row", ROW)):
@@ -172,77 +242,104 @@ def main():
     height, width = args.size
 
     model = nr_model.NeuralRenderingModel.from_safetensors(nr_model.default_weights())
-    runtime = xmxres.Runtime()
-    xmxres.profile(True)
+    runtime = Recorder()
+    profile.profile(True)
     frame = F.ResidentFrame(runtime, model.weights, height, width)
-    features = (np.random.default_rng(11).standard_normal((height, width, 16))
-                * 0.3).astype(np.float32)
+    features = (np.random.default_rng(11).standard_normal((height, width, 16)) * 0.3).astype(
+        np.float32
+    )
 
-    frame.run(features, execution="single")         # record
-    until = time.perf_counter() + args.seconds      # clocks settle under real load
+    frame.run(features, execution="single")  # record
+    until = time.perf_counter() + args.seconds  # clocks settle under real load
     while time.perf_counter() < until:
         frame.run(features, execution="single")
     log = record_calls(runtime.lib) if args.calls else None
-    xmxres.profile_reset()
+    profile.profile_reset()
     started = time.perf_counter()
-    for _ in range(args.runs):                      # exactly --runs timed frames
+    for _ in range(args.runs):  # exactly --runs timed frames
         head = frame.run(features, execution="single")
     wall = (time.perf_counter() - started) / args.runs
 
-    totals = xmxres.profile_totals()
-    rows = sorted(((ms / args.runs, n / args.runs, label(f, s))
-                   for (f, s), (ms, n) in totals.items()), reverse=True)
+    totals = profile.profile_totals()
+    rows = sorted(
+        ((ms / args.runs, n / args.runs, label(f, s)) for (f, s), (ms, n) in totals.items()),
+        reverse=True,
+    )
     device = sum(r[0] for r in rows)
     print("%dx%d, %d runs\n" % (width, height, args.runs))
     print("  %-28s %9s %8s %9s %7s" % ("pass", "ms", "share", "passes", "us each"))
     for ms, passes, name in rows:
-        print("  %-28s %9.2f %7.1f%% %9.0f %7.1f"
-              % (name, ms, 100 * ms / device, passes, 1000 * ms / max(passes, 1)))
+        print(
+            "  %-28s %9.2f %7.1f%% %9.0f %7.1f"
+            % (name, ms, 100 * ms / device, passes, 1000 * ms / max(passes, 1))
+        )
     print("  %-28s %9.2f %7.1f%%" % ("- device total", device, 100.0))
     print("  %-28s %9.2f" % ("- wall per frame", wall * 1e3))
-    print("  %-28s %9.2f  (host: recording, numpy, the rest)"
-          % ("- host overhead", wall * 1e3 - device))
+    print(
+        "  %-28s %9.2f  (host: recording, numpy, the rest)"
+        % ("- host overhead", wall * 1e3 - device)
+    )
     gemm = sum(ms for ms, _, name in rows if name.startswith("gemm"))
-    print("\n  GEMM %.1f ms of %.1f (%.0f%%); everything else %.1f ms (%.0f%%)"
-          % (gemm, device, 100 * gemm / device, device - gemm, 100 * (device - gemm) / device))
+    print(
+        f"\n  GEMM {gemm:.1f} ms of {device:.1f} ({100 * gemm / device:.0f}%); everything else {device - gemm:.1f} ms ({100 * (device - gemm) / device:.0f}%)"
+    )
     if args.record:
-        import hashlib, json, subprocess
-        version = subprocess.run(["git", "-C", str(ROOT), "describe", "--always", "--dirty"],
-                                 capture_output=True, text=True)
+        import hashlib
+        import json
+        import subprocess
+
+        version = subprocess.run(
+            ["git", "-C", str(ROOT), "describe", "--always", "--dirty"],
+            capture_output=True,
+            text=True,
+        )
         if version.returncode != 0:
             raise RuntimeError(f"git describe failed: {version.stderr.strip()}")
         commit = version.stdout.strip()
-        entry = {"label": args.record, "kind": "frame", "time": time.strftime("%Y-%m-%dT%H:%M:%S"), "commit": commit,
-                 "size": [width, height], "frames": args.runs, "seconds": round(wall * args.runs, 3),
-                 "device": runtime.lib.xmx_device().decode(),
-                 "wall_ms": round(wall * 1e3, 2), "device_ms": round(device, 2),
-                 "fps": round(1.0 / wall, 2),
-                 "head": hashlib.sha1(np.ascontiguousarray(head).tobytes()).hexdigest()[:12]
-                 if isinstance(head, np.ndarray) else None,
-                 "passes": {name: round(ms, 3) for ms, _, name in rows}}
+        entry = {
+            "label": args.record,
+            "kind": "frame",
+            "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "commit": commit,
+            "size": [width, height],
+            "frames": args.runs,
+            "seconds": round(wall * args.runs, 3),
+            "device": runtime.lib.xmx_device().decode(),
+            "wall_ms": round(wall * 1e3, 2),
+            "device_ms": round(device, 2),
+            "fps": round(1.0 / wall, 2),
+            "head": hashlib.sha1(np.ascontiguousarray(head).tobytes()).hexdigest()[:12]
+            if isinstance(head, np.ndarray)
+            else None,
+            "passes": {name: round(ms, 3) for ms, _, name in rows},
+        }
         with open(ROOT / "notes" / "perf-log.jsonl", "a") as sink:
             sink.write(json.dumps(entry) + "\n")
-        print("  recorded %r -> notes/perf-log.jsonl" % args.record)
+        print(f"  recorded {args.record!r} -> notes/perf-log.jsonl")
     if log is not None:
-        each = xmxres.profile_each()
+        each = profile.profile_each()
         if len(each) != len(log):
-            raise SystemExit("%d passes timed against %d recorded: the labels would not line "
-                             "up, so none are printed" % (len(each), len(log)))
+            raise SystemExit(
+                "%d passes timed against %d recorded: the labels would not line "
+                "up, so none are printed" % (len(each), len(log))
+            )
         # which kernel ran each GEMM: routing is by shape, and a label from the recording
         # side cannot say whether the tiled, the staged or the 8x16 kernel took it
-        kinds = xmxres.profile_each_kinds()
+        kinds = profile.profile_each_kinds()
         sites = {}
-        for name, ms, kind in zip(log, each, kinds):
-            family = xmxres.PROFILE_FAMILIES[kind // 32]
+        for name, ms, kind in zip(log, each, kinds, strict=False):
+            family = profile.PROFILE_FAMILIES[kind // 32]
             if family.startswith("gemm") and not name.startswith("ffn"):
                 tail = family.replace("gemm", "").strip()
-                name = "%s [%s]" % (name, tail or "8x16")
+                name = "{} [{}]".format(name, tail or "8x16")
             total, count = sites.get(name, (0.0, 0))
             sites[name] = (total + max(ms, 0.0), count + 1)
         print("\n  %-58s %8s %6s %8s" % ("call site", "ms", "calls", "ms each"))
-        for name, (total, count) in sorted(sites.items(), key=lambda s: -s[1][0])[:args.calls]:
-            print("  %-58s %8.2f %6.0f %8.3f"
-                  % (name, total / args.runs, count / args.runs, total / count))
+        for name, (total, count) in sorted(sites.items(), key=lambda s: -s[1][0])[: args.calls]:
+            print(
+                "  %-58s %8.2f %6.0f %8.3f"
+                % (name, total / args.runs, count / args.runs, total / count)
+            )
 
 
 if __name__ == "__main__":

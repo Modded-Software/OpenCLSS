@@ -34,22 +34,22 @@ The dequantised values are rounded to half on the way back, 2^-11 against the gr
 extent. `--size WxH` resamples each frame first, to the network extent a live game sees
 (640x360 at render scale 0.5 is a 320x180 frame on a 320x320 network).
 """
+
 import argparse
 import os
 import pathlib
 import sys
 
+import image_io
+import nr_frame
+import nr_resident
 import numpy as np
+from xmxrt import attention, elementwise, gemm, memory, ops
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / "src" / "ref"), str(ROOT / "src" / "gpu")]
-import image_io                                                        # noqa: E402
-import nr_frame                                                        # noqa: E402
-import nr_resident                                                     # noqa: E402
-import xmxres                                                          # noqa: E402
 
 GLOBAL_BLOCKS = tuple(f"block{i}." for i in range(31, 39))
-LIMIT = 127                          # symmetric int8: -128..127, the negative end unused
+LIMIT = 127  # symmetric int8: -128..127, the negative end unused
 MODEL_PARAMETERS = 145_755_123
 THRESHOLDS = (1, 2, 4, 8)
 
@@ -80,7 +80,7 @@ def quantise_global_blocks(weights):
 
 def quantise_rows(buffer, rows, width):
     """Round a (rows, width) half buffer onto an int8 grid per row and back, in place."""
-    view = xmxres.host_view(buffer, np.float16)[:rows * width].reshape(rows, width)
+    view = memory.host_view(buffer, np.float16)[: rows * width].reshape(rows, width)
     wide = view.astype(np.float32)
     peak = np.max(np.abs(wide), axis=1, keepdims=True)
     scale = np.where(peak == 0, 1.0, peak / LIMIT)
@@ -113,7 +113,7 @@ def global_block_int8(runtime, w, s, source=None, target=None, *, chain=False):
         runtime.begin()
 
     def half_copy(source16, target16, count):
-        runtime.unary(xmxres.E4M3, source16, target16, count, a_half=True, narrow=True)
+        elementwise.unary(runtime, ops.E4M3, source16, target16, count, a_half=True, narrow=True)
 
     channels, heads, padded = w.channels, w.heads, s.padded
     if chain:
@@ -121,42 +121,123 @@ def global_block_int8(runtime, w, s, source=None, target=None, *, chain=False):
         half_copy(source, s.value16, padded * channels)
     else:
         source = source or s.value
-        runtime.to_half(source, s.value16, padded * channels)
+        elementwise.to_half(runtime, source, s.value16, padded * channels)
     int8_rows(s.value16, channels)
-    runtime.gemm(s.value16, w.expand, s.hidden16, padded, w.hidden_width, channels,
-                 epilogue=xmxres.EPI_GATE_E4M3, narrow=True)
+    gemm.gemm(
+        runtime,
+        s.value16,
+        w.expand,
+        s.hidden16,
+        padded,
+        w.hidden_width,
+        channels,
+        epilogue=ops.EPI_GATE_E4M3,
+        narrow=True,
+    )
     int8_rows(s.hidden16, w.hidden_width)
-    R.record_project_residual(runtime, s.hidden16, w.ffn_proj, s.branch, source, w.ffn_cos,
-                              s.ffn, padded, channels, w.hidden_width, skip_half=chain,
-                              epilogue=xmxres.EPI_E4M3, narrow=True)
+    R.record_project_residual(
+        runtime,
+        s.hidden16,
+        w.ffn_proj,
+        s.branch,
+        source,
+        w.ffn_cos,
+        s.ffn,
+        padded,
+        channels,
+        w.hidden_width,
+        skip_half=chain,
+        epilogue=ops.EPI_E4M3,
+        narrow=True,
+    )
     half_copy(s.ffn, s.ffn16, padded * channels)
     int8_rows(s.ffn16, channels)
     key = R.record_qkv_projection(runtime, s.ffn16, w, s, 1, padded, channels, heads, vit=True)
-    runtime.gemm(s.q16, key, s.scores, padded, padded, 32, batch=heads,
-                 strides=(padded * 32, padded * 32, padded * padded), transpose_b=True)
-    runtime.vit_softmax(s.scores, s.probs16, s.reciprocal, heads * padded, s.tokens,
-                        stride=padded)
-    runtime.gemm(s.probs16, s.v16, s.context, padded, 32, padded, batch=heads,
-                 strides=(padded * padded, padded * 32, padded * 32))
-    runtime.merge_heads(s.context, s.merged16, 1, padded, channels, heads,
-                        epilogue=xmxres.EPI_E4M3, narrow=True, scale=s.reciprocal)
+    gemm.gemm(
+        runtime,
+        s.q16,
+        key,
+        s.scores,
+        padded,
+        padded,
+        32,
+        batch=heads,
+        strides=(padded * 32, padded * 32, padded * padded),
+        transpose_b=True,
+    )
+    attention.vit_softmax(
+        runtime,
+        s.scores,
+        s.probs16,
+        s.reciprocal,
+        heads * padded,
+        s.tokens,
+        stride=padded,
+    )
+    gemm.gemm(
+        runtime,
+        s.probs16,
+        s.v16,
+        s.context,
+        padded,
+        32,
+        padded,
+        batch=heads,
+        strides=(padded * padded, padded * 32, padded * 32),
+    )
+    elementwise.merge_heads(
+        runtime,
+        s.context,
+        s.merged16,
+        1,
+        padded,
+        channels,
+        heads,
+        epilogue=ops.EPI_E4M3,
+        narrow=True,
+        scale=s.reciprocal,
+    )
     int8_rows(s.merged16, channels)
     if chain:
-        R.record_project_residual(runtime, s.merged16, w.out, s.attention, s.ffn, w.attn_cos,
-                                  s.io16, s.tokens, channels, channels,
-                                  epilogue=xmxres.EPI_E4M3, narrow=True, skip_half=True)
+        R.record_project_residual(
+            runtime,
+            s.merged16,
+            w.out,
+            s.attention,
+            s.ffn,
+            w.attn_cos,
+            s.io16,
+            s.tokens,
+            channels,
+            channels,
+            epilogue=ops.EPI_E4M3,
+            narrow=True,
+            skip_half=True,
+        )
     else:
-        R.record_project_residual(runtime, s.merged16, w.out, s.attention, s.ffn, w.attn_cos,
-                                  target or s.out, padded, channels, channels, skip_half=True)
+        R.record_project_residual(
+            runtime,
+            s.merged16,
+            w.out,
+            s.attention,
+            s.ffn,
+            w.attn_cos,
+            target or s.out,
+            padded,
+            channels,
+            channels,
+            skip_half=True,
+        )
 
 
 def render(colour, weights, activations):
     # the operands are rounded between submits, which a replayed graph has none of
-    os.environ["NR_FRAME_MODE"] = "block" if activations else os.environ.get("NR_FRAME_MODE", "replay")
+    os.environ["NR_FRAME_MODE"] = (
+        "block" if activations else os.environ.get("NR_FRAME_MODE", "replay")
+    )
     backend = nr_frame.ResidentBackend()
     OPERANDS[0] = 0
-    nr_resident.record_global_block = (global_block_int8 if activations
-                                       else _RECORD_GLOBAL_BLOCK)
+    nr_resident.record_global_block = global_block_int8 if activations else _RECORD_GLOBAL_BLOCK
     try:
         counts = quantise_global_blocks(backend.weights) if weights else (0, 0)
         head, _ = nr_frame.run_head(backend, colour)
@@ -168,8 +249,8 @@ def render(colour, weights, activations):
 
 def resampled(colour, size):
     """The frame at `size` (width, height), resampled the way the daemon does it."""
-    sys.path.insert(0, str(ROOT / "src" / "layer"))
     import nr_daemon
+
     width, height = size
     return np.ascontiguousarray(nr_daemon.resample(colour, (height, width)), np.float32)
 
@@ -200,69 +281,117 @@ def measure(path, colour, write_crops, activations):
     damage = np.abs(quantised - reference).max(axis=2) * 255
     mean_effect = float((np.abs(reference - colour).mean()) * 255)
     mean_damage = float((np.abs(quantised - reference).mean()) * 255)
-    row = dict(name=path.name, width=colour.shape[1], height=colour.shape[0],
-               matrices=matrices, elements=elements, drift=drift, operands=OPERANDS[0],
-               effect=mean_effect, damage=mean_damage,
-               share=mean_damage / mean_effect * 100 if mean_effect else float("nan"),
-               median=float(np.median(damage)), p99=float(np.percentile(damage, 99)),
-               worst=float(damage.max()),
-               over={t: (float((damage > t).mean() * 100), float((effect > t).mean() * 100))
-                     for t in THRESHOLDS})
+    row = {
+        "name": path.name,
+        "width": colour.shape[1],
+        "height": colour.shape[0],
+        "matrices": matrices,
+        "elements": elements,
+        "drift": drift,
+        "operands": OPERANDS[0],
+        "effect": mean_effect,
+        "damage": mean_damage,
+        "share": mean_damage / mean_effect * 100 if mean_effect else float("nan"),
+        "median": float(np.median(damage)),
+        "p99": float(np.percentile(damage, 99)),
+        "worst": float(damage.max()),
+        "over": {
+            t: (float((damage > t).mean() * 100), float((effect > t).mean() * 100))
+            for t in THRESHOLDS
+        },
+    }
     if write_crops:
         y, x = np.unravel_index(int(np.argmax(damage)), damage.shape)
         top, left = max(0, y - 140), max(0, x - 140)
-        cut = lambda a: a[top:top + 280, left:left + 280]                      # noqa: E731
+
+        def cut(a):
+            return a[top : top + 280, left : left + 280]
+
         out = ROOT / "work" / f"int8_crop_{path.stem}.png"
-        image_io.save(np.clip(np.concatenate([cut(colour), cut(reference), cut(quantised)],
-                                             axis=1), 0, 1), str(out))
+        image_io.save(
+            np.clip(
+                np.concatenate([cut(colour), cut(reference), cut(quantised)], axis=1),
+                0,
+                1,
+            ),
+            str(out),
+        )
         row["crop"] = out.relative_to(ROOT)
     return row
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("images", nargs="*", help="frames to measure; default: pngs/ then work/")
-    parser.add_argument("--write-crops", action="store_true",
-                        help="save input | fp16 | int8 around each frame's worst pixel")
-    parser.add_argument("--activations", action="store_true",
-                        help="the weight GEMMs' activations on an int8 grid per row too")
-    parser.add_argument("--size", metavar="WxH",
-                        help="resample each frame to this extent first, as the daemon would")
+    parser.add_argument(
+        "--write-crops",
+        action="store_true",
+        help="save input | fp16 | int8 around each frame's worst pixel",
+    )
+    parser.add_argument(
+        "--activations",
+        action="store_true",
+        help="the weight GEMMs' activations on an int8 grid per row too",
+    )
+    parser.add_argument(
+        "--size",
+        metavar="WxH",
+        help="resample each frame to this extent first, as the daemon would",
+    )
     args = parser.parse_args()
     size = tuple(int(v) for v in args.size.split("x")) if args.size else None
     if args.activations:
         # the hook submits and resumes inside a block, which a captured graph cannot
         os.environ["NR_FRAME_MODE"] = "block"
     paths = args.images or sorted(
-        p for p in list((ROOT / "pngs").glob("*.[jp][pn]g")) + [ROOT / "work" / "frame_in.png"]
-        if p.exists())
+        p
+        for p in [
+            *list((ROOT / "pngs").glob("*.[jp][pn]g")),
+            ROOT / "work" / "frame_in.png",
+        ]
+        if p.exists()
+    )
     if not paths:
         print("no frames to measure - pass one; a skip is not a pass")
         return 0
 
-    rows = [r for r in (measure(p, c, args.write_crops, args.activations)
-                        for p, c in frames(paths, size)) if r]
+    rows = [
+        r
+        for r in (measure(p, c, args.write_crops, args.activations) for p, c in frames(paths, size))
+        if r
+    ]
     if not rows:
         return 1
-    print(f"\n  {rows[0]['matrices']} matrices, {rows[0]['elements']:,} weights"
-          f" ({rows[0]['elements'] / MODEL_PARAMETERS * 100:.1f} % of the model) on the int8 grid")
+    print(
+        f"\n  {rows[0]['matrices']} matrices, {rows[0]['elements']:,} weights"
+        f" ({rows[0]['elements'] / MODEL_PARAMETERS * 100:.1f} % of the model) on the int8 grid"
+    )
     if args.activations:
         print(f"  and {rows[0]['operands']} GEMM operands a frame on an int8 grid per row")
-    print(f"\n  {'frame':26} {'extent':>11} {'effect':>8} {'damage':>8} {'share':>7}"
-          f" {'median':>8} {'p99':>7} {'worst':>7} {'repeat':>8}")
+    print(
+        f"\n  {'frame':26} {'extent':>11} {'effect':>8} {'damage':>8} {'share':>7}"
+        f" {'median':>8} {'p99':>7} {'worst':>7} {'repeat':>8}"
+    )
     for r in rows:
-        print(f"  {r['name'][:26]:26} {r['width']:5d}x{r['height']:<5d} {r['effect']:7.2f}L"
-              f" {r['damage']:7.2f}L {r['share']:6.1f}% {r['median']:7.3f}L {r['p99']:6.2f}L"
-              f" {r['worst']:6.1f}L {r['drift']:7.3f}L")
-    print("\n  levels of 255. `repeat` is the same configuration rendered twice: it has to be"
-          "\n  0.000, or the damage column is measuring the machine and not the quantiser.")
+        print(
+            f"  {r['name'][:26]:26} {r['width']:5d}x{r['height']:<5d} {r['effect']:7.2f}L"
+            f" {r['damage']:7.2f}L {r['share']:6.1f}% {r['median']:7.3f}L {r['p99']:6.2f}L"
+            f" {r['worst']:6.1f}L {r['drift']:7.3f}L"
+        )
+    print(
+        "\n  levels of 255. `repeat` is the same configuration rendered twice: it has to be"
+        "\n  0.000, or the damage column is measuring the machine and not the quantiser."
+    )
     for r in rows:
         print(f"\n  {r['name']} - where the damage sits")
         for t in THRESHOLDS:
             mine, theirs = r["over"][t]
-            print(f"    above {t:2d} levels: int8 moves {mine:6.3f} % of pixels;"
-                  f" the network itself moves {theirs:5.1f} %")
+            print(
+                f"    above {t:2d} levels: int8 moves {mine:6.3f} % of pixels;"
+                f" the network itself moves {theirs:5.1f} %"
+            )
         if "crop" in r:
             print(f"    crop: {r['crop']}")
     return 0

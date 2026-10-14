@@ -11,41 +11,66 @@ the two can be run side by side. Images are float32 (height, width, 3) in [0, 1]
     live = NativeLive(frame)                            # the daemon's frame, stateful
     answer, report = live.run(bgra, render_scale=0.5)   # (h, w, 4) uint8 in, the same out
 """
+
 import ctypes as C
 import os
 import sys
-from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src"))
-import nr_build  # noqa: E402
+import nr_build
+
 LIBRARY = nr_build.library("nr_frame")
 
 
 class Params(C.Structure):
-    _fields_ = [("intensity", C.c_float), ("detail_strength", C.c_float),
-                ("colour_strength", C.c_float), ("detail_radius", C.c_float),
-                ("normalized_style", C.c_float), ("local_tone", C.c_float),
-                ("local_structure", C.c_float), ("frame_index", C.c_int),
-                ("history_confidence", C.c_float), ("blend_scale", C.c_float),
-                ("hold", C.c_float), ("slope", C.c_float), ("release", C.c_float),
-                ("automatic_mask", C.c_int), ("skin_structure", C.c_float),
-                ("automatic_structure", C.c_float), ("min_extent", C.c_int),
-                ("grade_off", C.c_int)]
+    _fields_ = [
+        ("intensity", C.c_float),
+        ("detail_strength", C.c_float),
+        ("colour_strength", C.c_float),
+        ("detail_radius", C.c_float),
+        ("normalized_style", C.c_float),
+        ("local_tone", C.c_float),
+        ("local_structure", C.c_float),
+        ("frame_index", C.c_int),
+        ("history_confidence", C.c_float),
+        ("blend_scale", C.c_float),
+        ("hold", C.c_float),
+        ("slope", C.c_float),
+        ("release", C.c_float),
+        ("automatic_mask", C.c_int),
+        ("skin_structure", C.c_float),
+        ("automatic_structure", C.c_float),
+        ("min_extent", C.c_int),
+        ("grade_off", C.c_int),
+    ]
 
 
 class LiveSettings(C.Structure):
-    _fields_ = [("render_scale", C.c_float), ("temporal", C.c_float), ("cut_limit", C.c_float),
-                ("hold", C.c_float), ("release", C.c_float), ("letterbox", C.c_int)]
+    _fields_ = [
+        ("render_scale", C.c_float),
+        ("temporal", C.c_float),
+        ("cut_limit", C.c_float),
+        ("hold", C.c_float),
+        ("release", C.c_float),
+        ("letterbox", C.c_int),
+    ]
 
 
 class LiveReport(C.Structure):
-    _fields_ = [("top", C.c_int), ("bottom", C.c_int), ("left", C.c_int), ("right", C.c_int),
-                ("render_width", C.c_int), ("render_height", C.c_int),
-                ("network_width", C.c_int), ("network_height", C.c_int),
-                ("with_history", C.c_int), ("cut", C.c_double), ("change", C.c_double)]
+    _fields_ = [
+        ("top", C.c_int),
+        ("bottom", C.c_int),
+        ("left", C.c_int),
+        ("right", C.c_int),
+        ("render_width", C.c_int),
+        ("render_height", C.c_int),
+        ("network_width", C.c_int),
+        ("network_height", C.c_int),
+        ("with_history", C.c_int),
+        ("cut", C.c_double),
+        ("change", C.c_double),
+    ]
 
 
 _lib = None
@@ -65,20 +90,25 @@ def library():
         lib.nr_frame_error.restype = C.c_char_p
         lib.nr_frame_embedded_weights_size.argtypes = []
         lib.nr_frame_embedded_weights_size.restype = C.c_size_t
-        if hasattr(lib, "nr_frame_prepare"):          # a library older than 2026-10-10 has none
+        if hasattr(lib, "nr_frame_prepare"):  # a library older than 2026-10-10 has none
             lib.nr_frame_prepare.argtypes = [C.c_char_p, C.c_char_p]
             lib.nr_frame_prepare.restype = C.c_int
         lib.nr_frame_device.argtypes = [C.c_void_p]
         lib.nr_frame_device.restype = C.c_char_p
         lib.nr_frame_gemm_path.argtypes = [C.c_void_p]
         lib.nr_frame_gemm_path.restype = C.c_char_p
-        for name in ("nr_frame_discrete", "nr_frame_preserve16", "nr_frame_half_by_cast",
-                     "nr_frame_staged_packed", "nr_frame_portable_packed"):
+        for name in (
+            "nr_frame_discrete",
+            "nr_frame_preserve16",
+            "nr_frame_half_by_cast",
+            "nr_frame_staged_packed",
+            "nr_frame_portable_packed",
+        ):
             getattr(lib, name).argtypes = []
             getattr(lib, name).restype = C.c_int
         lib.nr_frame_input_view.argtypes = [C.c_void_p]
         lib.nr_frame_input_view.restype = C.c_int
-        if hasattr(lib, "nr_frame_prepared"):          # 2026-10-10
+        if hasattr(lib, "nr_frame_prepared"):  # 2026-10-10
             lib.nr_frame_prepared.argtypes = [C.c_void_p]
             lib.nr_frame_prepared.restype = C.c_int
             for name in ("nr_frame_weights_aliased", "nr_frame_weights_count"):
@@ -86,49 +116,146 @@ def library():
                 getattr(lib, name).restype = C.c_size_t
         lib.nr_frame_defaults.argtypes = [C.POINTER(Params)]
         lib.nr_frame_defaults.restype = None
-        lib.nr_frame_geometry.argtypes = [C.c_int, C.c_int, C.POINTER(C.c_int), C.POINTER(C.c_int)]
+        lib.nr_frame_geometry.argtypes = [
+            C.c_int,
+            C.c_int,
+            C.POINTER(C.c_int),
+            C.POINTER(C.c_int),
+        ]
         lib.nr_frame_geometry.restype = None
-        lib.nr_frame_geometry_min.argtypes = [C.c_int, C.c_int, C.c_int, C.POINTER(C.c_int),
-                                              C.POINTER(C.c_int)]
+        lib.nr_frame_geometry_min.argtypes = [
+            C.c_int,
+            C.c_int,
+            C.c_int,
+            C.POINTER(C.c_int),
+            C.POINTER(C.c_int),
+        ]
         lib.nr_frame_geometry_min.restype = None
         lib.nr_frame_compose_encode.argtypes = [
-            C.c_void_p, C.c_void_p, C.c_int, C.c_int, C.c_void_p, C.c_int, C.c_int, C.c_void_p,
-            C.c_void_p, C.c_void_p, C.POINTER(Params), C.c_void_p, C.c_void_p, C.c_int, C.c_int,
-            C.c_int, C.c_int]
+            C.c_void_p,
+            C.c_void_p,
+            C.c_int,
+            C.c_int,
+            C.c_void_p,
+            C.c_int,
+            C.c_int,
+            C.c_void_p,
+            C.c_void_p,
+            C.c_void_p,
+            C.POINTER(Params),
+            C.c_void_p,
+            C.c_void_p,
+            C.c_int,
+            C.c_int,
+            C.c_int,
+            C.c_int,
+        ]
         lib.nr_frame_compose_encode.restype = C.c_int
-        lib.nr_frame_update.argtypes = [C.c_void_p, C.c_void_p, C.c_int, C.c_int, C.c_void_p,
-                                        C.c_void_p, C.POINTER(Params), C.c_void_p, C.c_void_p]
+        lib.nr_frame_update.argtypes = [
+            C.c_void_p,
+            C.c_void_p,
+            C.c_int,
+            C.c_int,
+            C.c_void_p,
+            C.c_void_p,
+            C.POINTER(Params),
+            C.c_void_p,
+            C.c_void_p,
+        ]
         lib.nr_frame_update.restype = C.c_int
-        lib.nr_frame_features.argtypes = [C.c_void_p, C.c_void_p, C.c_int, C.c_int, C.c_void_p,
-                                          C.POINTER(Params), C.c_void_p]
+        lib.nr_frame_features.argtypes = [
+            C.c_void_p,
+            C.c_void_p,
+            C.c_int,
+            C.c_int,
+            C.c_void_p,
+            C.POINTER(Params),
+            C.c_void_p,
+        ]
         lib.nr_frame_features.restype = C.c_int
-        lib.nr_frame_run_features.argtypes = [C.c_void_p, C.c_void_p, C.c_int, C.c_int, C.c_void_p]
+        lib.nr_frame_run_features.argtypes = [
+            C.c_void_p,
+            C.c_void_p,
+            C.c_int,
+            C.c_int,
+            C.c_void_p,
+        ]
         lib.nr_frame_run_features.restype = C.c_int
-        lib.nr_frame_update_masked.argtypes = [C.c_void_p, C.c_void_p, C.c_int, C.c_int, C.c_void_p,
-                                               C.c_void_p, C.c_void_p, C.POINTER(Params), C.c_void_p,
-                                               C.c_void_p]
+        lib.nr_frame_update_masked.argtypes = [
+            C.c_void_p,
+            C.c_void_p,
+            C.c_int,
+            C.c_int,
+            C.c_void_p,
+            C.c_void_p,
+            C.c_void_p,
+            C.POINTER(Params),
+            C.c_void_p,
+            C.c_void_p,
+        ]
         lib.nr_frame_update_masked.restype = C.c_int
-        lib.nr_frame_features_masked.argtypes = [C.c_void_p, C.c_void_p, C.c_int, C.c_int, C.c_void_p,
-                                                 C.c_void_p, C.POINTER(Params), C.c_void_p]
+        lib.nr_frame_features_masked.argtypes = [
+            C.c_void_p,
+            C.c_void_p,
+            C.c_int,
+            C.c_int,
+            C.c_void_p,
+            C.c_void_p,
+            C.POINTER(Params),
+            C.c_void_p,
+        ]
         lib.nr_frame_features_masked.restype = C.c_int
-        lib.nr_frame_compose.argtypes = [C.c_void_p, C.c_void_p, C.c_void_p, C.c_int, C.c_int, C.c_void_p,
-                                         C.c_void_p, C.c_void_p, C.POINTER(Params), C.c_void_p]
+        lib.nr_frame_compose.argtypes = [
+            C.c_void_p,
+            C.c_void_p,
+            C.c_void_p,
+            C.c_int,
+            C.c_int,
+            C.c_void_p,
+            C.c_void_p,
+            C.c_void_p,
+            C.POINTER(Params),
+            C.c_void_p,
+        ]
         lib.nr_frame_compose.restype = C.c_int
-        lib.nr_frame_update_neural.argtypes = lib.nr_frame_update_masked.argtypes + [C.c_void_p]
+        lib.nr_frame_update_neural.argtypes = [
+            *lib.nr_frame_update_masked.argtypes,
+            C.c_void_p,
+        ]
         lib.nr_frame_update_neural.restype = C.c_int
-        lib.nr_frame_compose_neural.argtypes = lib.nr_frame_compose.argtypes + [C.c_void_p]
+        lib.nr_frame_compose_neural.argtypes = [
+            *lib.nr_frame_compose.argtypes,
+            C.c_void_p,
+        ]
         lib.nr_frame_compose_neural.restype = C.c_int
-        lib.nr_frame_compose_encode_neural.argtypes = lib.nr_frame_compose_encode.argtypes + [C.c_void_p]
+        lib.nr_frame_compose_encode_neural.argtypes = [
+            *lib.nr_frame_compose_encode.argtypes,
+            C.c_void_p,
+        ]
         lib.nr_frame_compose_encode_neural.restype = C.c_int
-        lib.nr_frame_render_extent.argtypes = [C.c_int, C.c_int, C.c_float, C.c_int,
-                                               C.POINTER(C.c_int), C.POINTER(C.c_int)]
+        lib.nr_frame_render_extent.argtypes = [
+            C.c_int,
+            C.c_int,
+            C.c_float,
+            C.c_int,
+            C.POINTER(C.c_int),
+            C.POINTER(C.c_int),
+        ]
         lib.nr_frame_render_extent.restype = None
         lib.nr_frame_grade.argtypes = [C.POINTER(Params), C.POINTER(C.c_float * 3)]
         lib.nr_frame_grade.restype = C.c_int
         lib.nr_frame_split.argtypes = [C.c_void_p, C.c_int]
         lib.nr_frame_split.restype = C.c_double
-        lib.nr_frame_head.argtypes = [C.c_void_p, C.c_void_p, C.c_int, C.c_int, C.c_void_p,
-                                      C.c_void_p, C.c_void_p, C.c_void_p]
+        lib.nr_frame_head.argtypes = [
+            C.c_void_p,
+            C.c_void_p,
+            C.c_int,
+            C.c_int,
+            C.c_void_p,
+            C.c_void_p,
+            C.c_void_p,
+            C.c_void_p,
+        ]
         lib.nr_frame_head.restype = C.c_int
         lib.nr_frame_live_defaults.argtypes = [C.POINTER(LiveSettings)]
         lib.nr_frame_live_defaults.restype = None
@@ -138,9 +265,17 @@ def library():
         lib.nr_frame_live_reset.restype = None
         lib.nr_frame_live_close.argtypes = [C.c_void_p]
         lib.nr_frame_live_close.restype = None
-        lib.nr_frame_live_run.argtypes = [C.c_void_p, C.POINTER(Params), C.POINTER(LiveSettings),
-                                          C.c_void_p, C.c_int, C.c_int, C.c_int, C.c_void_p,
-                                          C.POINTER(LiveReport)]
+        lib.nr_frame_live_run.argtypes = [
+            C.c_void_p,
+            C.POINTER(Params),
+            C.POINTER(LiveSettings),
+            C.c_void_p,
+            C.c_int,
+            C.c_int,
+            C.c_int,
+            C.c_void_p,
+            C.POINTER(LiveReport),
+        ]
         lib.nr_frame_live_run.restype = C.c_int
         _lib = lib
     return _lib
@@ -191,9 +326,13 @@ def _neural(neural, colour):
     array of the colour's shape, filled in place."""
     if neural is None:
         return None
-    if (not isinstance(neural, np.ndarray) or neural.dtype != np.float32
-            or neural.shape != colour.shape or not neural.flags.c_contiguous
-            or not neural.flags.writeable):
+    if (
+        not isinstance(neural, np.ndarray)
+        or neural.dtype != np.float32
+        or neural.shape != colour.shape
+        or not neural.flags.c_contiguous
+        or not neural.flags.writeable
+    ):
         raise ValueError("neural must be writable C-contiguous float32 of the colour's shape")
     return neural.ctypes.data
 
@@ -265,14 +404,21 @@ class NativeFrame:
     def prepared(self):
         """Whether the weights this frame opened were prepared (`nr_frame_prepared`): the
         derived tensors in, and from v2 every tensor read in place; -1 on an older library."""
-        return self.lib.nr_frame_prepared(self.handle) if hasattr(self.lib, "nr_frame_prepared") else -1
+        return (
+            self.lib.nr_frame_prepared(self.handle)
+            if hasattr(self.lib, "nr_frame_prepared")
+            else -1
+        )
 
     @property
     def weights_aliased(self):
         """(tensors read in place out of the slices or the file's mapping, tensors in all)."""
         if not hasattr(self.lib, "nr_frame_weights_aliased"):
             return (0, 0)
-        return (self.lib.nr_frame_weights_aliased(self.handle), self.lib.nr_frame_weights_count(self.handle))
+        return (
+            self.lib.nr_frame_weights_aliased(self.handle),
+            self.lib.nr_frame_weights_count(self.handle),
+        )
 
     @property
     def input_view(self):
@@ -296,8 +442,16 @@ class NativeFrame:
             raise ValueError(f"{name} must match the colour image shape")
         return image, image.ctypes.data
 
-    def update(self, colour, history=None, previous=None, control_mask=None, want_head=False,
-               neural=None, **values):
+    def update(
+        self,
+        colour,
+        history=None,
+        previous=None,
+        control_mask=None,
+        want_head=False,
+        neural=None,
+        **values,
+    ):
         """`neural`, an array of the colour's shape, receives the vendor's history
         (`nr_frame_update_neural`)."""
         colour = _image(colour, "colour", 3)
@@ -309,9 +463,18 @@ class NativeFrame:
         head = np.empty((height, width, 4), np.float32) if want_head else None
         p = params(**values)
         if self.lib.nr_frame_update_neural(
-                self.handle, colour.ctypes.data, height, width, hp, pp, mp,
-                C.byref(p), output.ctypes.data,
-                head.ctypes.data if head is not None else None, _neural(neural, colour)):
+            self.handle,
+            colour.ctypes.data,
+            height,
+            width,
+            hp,
+            pp,
+            mp,
+            C.byref(p),
+            output.ctypes.data,
+            head.ctypes.data if head is not None else None,
+            _neural(neural, colour),
+        ):
             self._fail("nr_frame_update_neural")
         return (output, head) if want_head else output
 
@@ -323,13 +486,29 @@ class NativeFrame:
         p = params(**values)
         H, W = geometry(height, width, p.min_extent)
         out = np.empty((H, W, 16), np.float32)
-        if self.lib.nr_frame_features_masked(self.handle, colour.ctypes.data, height, width, hp, mp,
-                                             C.byref(p), out.ctypes.data):
+        if self.lib.nr_frame_features_masked(
+            self.handle,
+            colour.ctypes.data,
+            height,
+            width,
+            hp,
+            mp,
+            C.byref(p),
+            out.ctypes.data,
+        ):
             self._fail("nr_frame_features_masked")
         return out
 
-    def compose(self, head, colour, history=None, previous=None, control_mask=None, neural=None,
-                **values):
+    def compose(
+        self,
+        head,
+        colour,
+        history=None,
+        previous=None,
+        control_mask=None,
+        neural=None,
+        **values,
+    ):
         """The composition of a cropped (h, w, 4) head, at any intensity, without the network.
         `neural` is `update`'s."""
         colour = _image(colour, "colour", 3)
@@ -342,22 +521,49 @@ class NativeFrame:
         control_mask, mp = self._optional(control_mask, colour, "control_mask")
         output = np.empty((height, width, 3), np.float32)
         p = params(**values)
-        if self.lib.nr_frame_compose_neural(self.handle, head.ctypes.data, colour.ctypes.data, height,
-                                            width, hp, pp, mp, C.byref(p), output.ctypes.data,
-                                            _neural(neural, colour)):
+        if self.lib.nr_frame_compose_neural(
+            self.handle,
+            head.ctypes.data,
+            colour.ctypes.data,
+            height,
+            width,
+            hp,
+            pp,
+            mp,
+            C.byref(p),
+            output.ctypes.data,
+            _neural(neural, colour),
+        ):
             self._fail("nr_frame_compose_neural")
         return output
 
-    def compose_encode(self, head, colour, encoded, top=0, left=0, bgra=True, history=None,
-                       previous=None, control_mask=None, neural=None, **values):
+    def compose_encode(
+        self,
+        head,
+        colour,
+        encoded,
+        top=0,
+        left=0,
+        bgra=True,
+        history=None,
+        previous=None,
+        control_mask=None,
+        neural=None,
+        **values,
+    ):
         """`nr_frame.compose_encode` in C: the (hh, hw, 4) head brought up to the colour's
         extent, composed and encoded into `encoded` (a writable (H, W, 4) uint8 copy of the
         request) at (top, left). Returns the composition."""
         colour = _image(colour, "colour", 3)
         head = _image(head, "head", 4)
         height, width = colour.shape[:2]
-        if (not isinstance(encoded, np.ndarray) or encoded.dtype != np.uint8 or encoded.ndim != 3
-                or encoded.shape[2] != 4 or not encoded.flags.c_contiguous):
+        if (
+            not isinstance(encoded, np.ndarray)
+            or encoded.dtype != np.uint8
+            or encoded.ndim != 3
+            or encoded.shape[2] != 4
+            or not encoded.flags.c_contiguous
+        ):
             raise ValueError("encoded must be a C-contiguous (H, W, 4) uint8 array")
         history, hp = self._optional(history, colour, "history")
         previous, pp = self._optional(previous, colour, "previous")
@@ -365,10 +571,25 @@ class NativeFrame:
         output = np.empty((height, width, 3), np.float32)
         p = params(**values)
         if self.lib.nr_frame_compose_encode_neural(
-                self.handle, head.ctypes.data, head.shape[0], head.shape[1],
-                colour.ctypes.data, height, width, hp, pp, mp, C.byref(p),
-                output.ctypes.data, encoded.ctypes.data, encoded.shape[1],
-                top, left, int(bool(bgra)), _neural(neural, colour)):
+            self.handle,
+            head.ctypes.data,
+            head.shape[0],
+            head.shape[1],
+            colour.ctypes.data,
+            height,
+            width,
+            hp,
+            pp,
+            mp,
+            C.byref(p),
+            output.ctypes.data,
+            encoded.ctypes.data,
+            encoded.shape[1],
+            top,
+            left,
+            int(bool(bgra)),
+            _neural(neural, colour),
+        ):
             self._fail("nr_frame_compose_encode_neural")
         return output
 
@@ -376,7 +597,9 @@ class NativeFrame:
         features = _image(features, "features", 16)
         H, W = features.shape[:2]
         head = np.empty((H, W, 4), np.float32)
-        if self.lib.nr_frame_run_features(self.handle, features.ctypes.data, H, W, head.ctypes.data):
+        if self.lib.nr_frame_run_features(
+            self.handle, features.ctypes.data, H, W, head.ctypes.data
+        ):
             self._fail("nr_frame_run_features")
         return head
 
@@ -388,8 +611,16 @@ class NativeFrame:
         control_mask, mp = self._optional(control_mask, colour, "control_mask")
         head = np.empty((height, width, 4), np.float32)
         p = params(**values)
-        if self.lib.nr_frame_head(self.handle, colour.ctypes.data, height, width, hp, mp,
-                                  C.byref(p), head.ctypes.data):
+        if self.lib.nr_frame_head(
+            self.handle,
+            colour.ctypes.data,
+            height,
+            width,
+            hp,
+            mp,
+            C.byref(p),
+            head.ctypes.data,
+        ):
             self._fail("nr_frame_head")
         return head
 
@@ -452,8 +683,16 @@ class NativeLive:
         s, p, report = live_settings(**live), params(**rest), LiveReport()
         answer = np.empty_like(pixels)
         height, width = pixels.shape[:2]
-        if self.lib.nr_frame_live_run(self.handle, C.byref(p), C.byref(s), pixels.ctypes.data,
-                                      width, height, int(bool(bgra)), answer.ctypes.data,
-                                      C.byref(report)):
+        if self.lib.nr_frame_live_run(
+            self.handle,
+            C.byref(p),
+            C.byref(s),
+            pixels.ctypes.data,
+            width,
+            height,
+            int(bool(bgra)),
+            answer.ctypes.data,
+            C.byref(report),
+        ):
             raise RuntimeError("nr_frame_live_run: " + self.lib.nr_frame_error().decode())
         return answer, {name: getattr(report, name) for name, _ in LiveReport._fields_}

@@ -17,22 +17,15 @@ rescale and tile padding are cached per tensor and done once.
 
     import nr_xmx; nr_xmx.install()
 """
+
 from __future__ import annotations
 
 import os
-import pathlib
-import sys
 import time
 
 import numpy as np
+import xmx
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "ref"))
-
-import xmx  # noqa: E402
-
-# Below this many multiply-accumulates the ~0.4 ms fixed dispatch cost exceeds what
-# numpy takes, even at the ~3 GFLOP/s of the reference BLAS this machine ships.
 MIN_MACS = 1 << 20
 
 # Arithmetic intensity, K*N/(K+N): multiply-accumulates per element moved across the
@@ -67,9 +60,10 @@ def calibrate():
     left @ right
     started = time.perf_counter()
     left @ right
-    rate = 2 * size ** 3 / max(time.perf_counter() - started, 1e-9) / 1e9
+    rate = 2 * size**3 / max(time.perf_counter() - started, 1e-9) / 1e9
     MIN_INTENSITY = 0 if rate < 20.0 else 256
     return MIN_INTENSITY
+
 
 # When True, activations that float16 cannot hold exactly are carried as a pair of
 # halves, two dispatches instead of one. 97.3 % of this graph's GEMM activations are
@@ -78,8 +72,16 @@ def calibrate():
 EXACT = False
 
 _prepared: dict[tuple, tuple] = {}
-STATS = {"gpu": 0, "gpu_macs": 0, "gpu_seconds": 0.0,
-         "cpu": 0, "cpu_macs": 0, "cpu_seconds": 0.0, "split": 0, "bytes": 0}
+STATS = {
+    "gpu": 0,
+    "gpu_macs": 0,
+    "gpu_seconds": 0.0,
+    "cpu": 0,
+    "cpu_macs": 0,
+    "cpu_seconds": 0.0,
+    "split": 0,
+    "bytes": 0,
+}
 
 
 def _moved(rows, inner, cols):
@@ -115,18 +117,19 @@ def _batched(a, b, transpose_b):
     if a.ndim != 4 or b.ndim != 4 or a.shape[:2] != b.shape[:2]:
         return None
     if MIN_INTENSITY is None:
-        calibrate()          # matmul_nt reaches here without going through matmul()
+        calibrate()  # matmul_nt reaches here without going through matmul()
     batch = a.shape[0] * a.shape[1]
     rows, inner = a.shape[2], a.shape[3]
     cols = b.shape[2] if transpose_b else b.shape[3]
-    if (batch * rows * inner * cols < MIN_MACS
-            or inner * cols < MIN_INTENSITY * (inner + cols)):
+    if batch * rows * inner * cols < MIN_MACS or inner * cols < MIN_INTENSITY * (inner + cols):
         return None
     started = time.perf_counter()
     try:
-        out = xmx.bmm_aligned(np.ascontiguousarray(a).reshape(batch, rows, inner),
-                              np.ascontiguousarray(b).reshape(batch, *b.shape[2:]),
-                              transpose_b=transpose_b)
+        out = xmx.bmm_aligned(
+            np.ascontiguousarray(a).reshape(batch, rows, inner),
+            np.ascontiguousarray(b).reshape(batch, *b.shape[2:]),
+            transpose_b=transpose_b,
+        )
     except ValueError as error:
         STATS["gpu_rejected"] = STATS.get("gpu_rejected", 0) + 1
         STATS["last_reject"] = str(error)
@@ -160,8 +163,7 @@ def matmul(a, b):
     if b.ndim == 2 and a.ndim >= 2 and a.shape[-1] == b.shape[0]:
         rows = int(np.prod(a.shape[:-1], dtype=np.int64))
         inner, cols = b.shape
-        if (rows * inner * cols >= MIN_MACS
-                and inner * cols >= MIN_INTENSITY * (inner + cols)):
+        if rows * inner * cols >= MIN_MACS and inner * cols >= MIN_INTENSITY * (inner + cols):
             started = time.perf_counter()
             flat = np.ascontiguousarray(a.reshape(rows, inner))
             key, operand = _operand(b)
@@ -182,7 +184,8 @@ def matmul(a, b):
     out = a @ b
     STATS["cpu"] += 1
     STATS["cpu_macs"] += int(np.prod(a.shape[:-1], dtype=np.int64)) * int(
-        np.prod(b.shape[-2:], dtype=np.int64))
+        np.prod(b.shape[-2:], dtype=np.int64)
+    )
     STATS["cpu_seconds"] += time.perf_counter() - started
     return out
 
@@ -203,6 +206,7 @@ def install(fuse_branched=True, exact=False):
     """
     global EXACT
     import nr_model
+
     EXACT = exact
     if MIN_INTENSITY is None:
         calibrate()
@@ -214,6 +218,7 @@ def install(fuse_branched=True, exact=False):
 
 def uninstall():
     import nr_model
+
     nr_model.MATMUL = None
     nr_model.MATMUL_NT = None
 
@@ -226,11 +231,18 @@ def reset_stats():
 def report():
     lines = []
     for where in ("gpu", "cpu"):
-        calls, macs, seconds = (STATS[where], STATS[f"{where}_macs"],
-                                STATS[f"{where}_seconds"])
+        calls, macs, seconds = (
+            STATS[where],
+            STATS[f"{where}_macs"],
+            STATS[f"{where}_seconds"],
+        )
         rate = 2 * macs / seconds / 1e9 if seconds > 0 else 0.0
-        lines.append(f"  {where.upper()}  {calls:6d} calls  {2 * macs / 1e9:8.1f} GFLOP  "
-                     f"{seconds:7.2f} s  {rate:7.1f} GFLOP/s")
-    lines.append(f"  host<->device {STATS['bytes'] / 1e9:.2f} GB in {STATS['gpu']} round trips"
-                 f"   (min intensity {MIN_INTENSITY})")
+        lines.append(
+            f"  {where.upper()}  {calls:6d} calls  {2 * macs / 1e9:8.1f} GFLOP  "
+            f"{seconds:7.2f} s  {rate:7.1f} GFLOP/s"
+        )
+    lines.append(
+        f"  host<->device {STATS['bytes'] / 1e9:.2f} GB in {STATS['gpu']} round trips"
+        f"   (min intensity {MIN_INTENSITY})"
+    )
     return "\n".join(lines)

@@ -11,6 +11,7 @@ Independently reimplemented here against our own DLL; nothing is redistributed.
 
 Usage: extract_modules.py <dll> <outdir>
 """
+
 import hashlib
 import json
 import re
@@ -18,10 +19,7 @@ import struct
 import sys
 from pathlib import Path
 
-try:
-    from compression import zstd          # Python 3.14 standard library (PEP 784)
-except ModuleNotFoundError:               # older interpreter: use the backport
-    import zstandard as zstd
+import zstandard as zstd
 
 MODULE_MAGIC = 0xBA55ED50
 ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
@@ -35,7 +33,7 @@ def elf_extent(data, off):
     end = max(phoff + phentsize * phnum, shoff + shentsize * shnum)
     for i in range(shnum):
         b = off + shoff + i * shentsize
-        stype, = struct.unpack_from("<I", data, b + 4)
+        (stype,) = struct.unpack_from("<I", data, b + 4)
         soff, ssize = struct.unpack_from("<QQ", data, b + 24)
         if stype != 8:
             end = max(end, soff + ssize)
@@ -58,7 +56,7 @@ def main():
         size = struct.unpack_from("<Q", dll, off + 8)[0] + 16
         if not (16 < size <= len(dll) - off):
             continue
-        blob = dll[off:off + size]
+        blob = dll[off : off + size]
         z = blob.find(ZSTD_MAGIC)
         if z < 0:
             continue
@@ -69,37 +67,67 @@ def main():
         head = raw[:4096].decode("ascii", "ignore")
         ver = re.search(r"(?m)^\s*\.version\s+(\S+)", head)
         tgt = re.search(r"(?m)^\s*\.target\s+([^\s,]+)", head)
-        r = dict(index=idx, dll_offset="0x%X" % off, container_size=size,
-                 decompressed_size=len(raw),
-                 sha256=hashlib.sha256(raw).hexdigest())
+        r = {
+            "index": idx,
+            "dll_offset": f"0x{off:X}",
+            "container_size": size,
+            "decompressed_size": len(raw),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+        }
         if ver and tgt:
             name = "module_%02d_%08X.ptx" % (idx, off)
             (out / name).write_bytes(raw)
-            entries = re.findall(r"(?m)^\s*(?:\.visible\s+)?\.entry\s+([^\s(]+)",
-                                 raw.decode("utf-8", "replace"))
-            r.update(kind="PTX", ptx_version=ver.group(1), ptx_target=tgt.group(1),
-                     entry_count=len(entries), file=name)
+            entries = re.findall(
+                r"(?m)^\s*(?:\.visible\s+)?\.entry\s+([^\s(]+)",
+                raw.decode("utf-8", "replace"),
+            )
+            r.update(
+                kind="PTX",
+                ptx_version=ver.group(1),
+                ptx_target=tgt.group(1),
+                entry_count=len(entries),
+                file=name,
+            )
         else:
             e = raw.find(ELF_MAGIC)
             if e < 0:
                 r.update(kind="UNKNOWN")
             else:
-                elf = raw[e:e + elf_extent(raw, e)]
+                elf = raw[e : e + elf_extent(raw, e)]
                 name = "module_%02d_%08X.elf" % (idx, off)
                 (out / name).write_bytes(elf)
-                r.update(kind="ELF", elf_machine=struct.unpack_from("<H", elf, 18)[0],
-                         elf_size=len(elf), file=name)
+                r.update(
+                    kind="ELF",
+                    elf_machine=struct.unpack_from("<H", elf, 18)[0],
+                    elf_size=len(elf),
+                    file=name,
+                )
         recs.append(r)
         idx += 1
-    (out / "modules.json").write_text(json.dumps(
-        dict(schema=1, source_sha256=hashlib.sha256(dll).hexdigest(),
-             module_count=len(recs), modules=recs), indent=2) + "\n")
+    (out / "modules.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "source_sha256": hashlib.sha256(dll).hexdigest(),
+                "module_count": len(recs),
+                "modules": recs,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     for r in recs:
-        print("  [%02d] @%-11s %-6s %-12s decompressed=%-12s %s"
-              % (r["index"], r["dll_offset"], r["kind"],
-                 r.get("ptx_target", "machine=%s" % r.get("elf_machine", "?")),
-                 format(r["decompressed_size"], ","),
-                 "entries=%d" % r["entry_count"] if r["kind"] == "PTX" else ""))
+        print(
+            "  [%02d] @%-11s %-6s %-12s decompressed=%-12s %s"
+            % (
+                r["index"],
+                r["dll_offset"],
+                r["kind"],
+                r.get("ptx_target", "machine={}".format(r.get("elf_machine", "?"))),
+                format(r["decompressed_size"], ","),
+                "entries=%d" % r["entry_count"] if r["kind"] == "PTX" else "",
+            )
+        )
     print("\n%d modules -> %s" % (len(recs), out))
 
 

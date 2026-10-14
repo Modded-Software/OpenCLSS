@@ -22,6 +22,7 @@ The elements are **FP16**, not FP8 E4M3 - see notes/phase3-weight-format.md.
 Usage:
     hnet_weights.py <weights_ht.bin> [--list] [--get <name> <out.f32>]
 """
+
 import struct
 import sys
 
@@ -34,7 +35,7 @@ def parse(blob):
     out = []
     while pos < len(blob):
         name_len = struct.unpack_from("<Q", blob, pos)[0]
-        name = blob[pos + 8: pos + 8 + name_len].decode("ascii")
+        name = blob[pos + 8 : pos + 8 + name_len].decode("ascii")
         p = pos + 8 + name_len
         rec_len = struct.unpack_from("<Q", blob, p)[0]
         end = p + 8 + rec_len
@@ -45,8 +46,16 @@ def parse(blob):
         n_elem = struct.unpack_from("<I", blob, data_off + data_len + 16)[0]
         if data_len != 2 * n_elem:
             raise ValueError("%s: data_len %d != 2*n_elem %d" % (name, data_len, n_elem))
-        out.append(dict(name=name, offset=data_off, nbytes=data_len,
-                        n_elem=n_elem, dtype=dtype, ndim=ndim))
+        out.append(
+            {
+                "name": name,
+                "offset": data_off,
+                "nbytes": data_len,
+                "n_elem": n_elem,
+                "dtype": dtype,
+                "ndim": ndim,
+            }
+        )
         pos = end
     if pos != len(blob):
         raise ValueError("walk ended at %d, expected %d" % (pos, len(blob)))
@@ -67,13 +76,17 @@ def main():
         want, dest = sys.argv[i + 1], sys.argv[i + 2]
         t = next(x for x in tensors if x["name"] == want)
         with open(dest, "wb") as f:
-            for v in to_f32(blob, t):
-                f.write(struct.pack("<f", v))
+            f.writelines(struct.pack("<f", v) for v in to_f32(blob, t))
         print("%s: %d elements -> %s (float32)" % (want, t["n_elem"], dest))
         return
-    print("%d tensors, %s elements, %s bytes of data"
-          % (len(tensors), format(sum(t["n_elem"] for t in tensors), ","),
-             format(sum(t["nbytes"] for t in tensors), ",")))
+    print(
+        "%d tensors, %s elements, %s bytes of data"
+        % (
+            len(tensors),
+            format(sum(t["n_elem"] for t in tensors), ","),
+            format(sum(t["nbytes"] for t in tensors), ","),
+        )
+    )
     if "--list" in sys.argv:
         for t in tensors:
             print("  %-34s %12s elem  @0x%09x" % (t["name"], format(t["n_elem"], ","), t["offset"]))
