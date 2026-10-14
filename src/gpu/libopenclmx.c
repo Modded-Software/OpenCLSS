@@ -410,6 +410,12 @@ static const char *GEMM_BLK_SRC =
 "    return as_float(sign | as_uint((float)steps * 5.9604644775390625e-08f));\n" \
 "}\n" \
 "#define HROUND(x) half_round_bits(x)\n" \
+"/* The same round on the hardware f32->f16 unit. It matches half_round_bits where it is used\n" \
+" * here - the gate's linear steps, hmul/hadd and the qkv cosine/vit squared terms - but NOT\n" \
+" * on hfma's `l*r+acc` (test_joint_qkv diverges), so it is applied only where it is exact.\n" \
+" * Mixing the two keeps the integer ALU and the convert unit busy at once instead of\n" \
+" * serialising every round on one pipe. */\n" \
+"#define HROUND_HW(x) ((float)convert_half_rte(x))\n" \
 "inline float e4m3(float x) {\n" \
 "    float magnitude = fmin(fabs(x), 448.0f);\n" \
 "    int exponent = (as_int(magnitude) >> 23) & 0xFF;\n" \
@@ -424,11 +430,11 @@ static const char *GEMM_BLK_SRC =
 "    float clamped = clamp(wide, -4.0f, 4.0f);\n" \
 "    float linear = fabs(clamped) * -0.055908203125f;\n" \
 "    linear += 0.447265625f;\n" \
-"    linear = HROUND(linear);\n" \
+"    linear = HROUND_HW(linear);\n" \
 "    linear *= clamped;\n" \
 "    linear += 0.89453125f;\n" \
 "    linear = HROUND(linear);\n" \
-"    return HROUND(wide * linear);\n" \
+"    return HROUND_HW(wide * linear);\n" \
 "}\n" \
 "inline float publish_epi(uint epilogue, float value) {\n" \
 "    if (epilogue == 2u || epilogue == 3u) value = gate_activation(value);\n" \
@@ -603,8 +609,8 @@ static const char *GEMM_BLK_SRC =
  * so a row per invocation computes the same values (notes: cosine_tree's tree order and
  * the softmax's coupled pair transform are what must be reproduced, not the staging). */
 #define COSINE_TREE \
-"inline float hmul(float l, float r) { float t = l * r; return HROUND(t); }\n" \
-"inline float hadd(float l, float r) { float t = l + r; return HROUND(t); }\n" \
+"inline float hmul(float l, float r) { float t = l * r; return HROUND_HW(t); }\n" \
+"inline float hadd(float l, float r) { float t = l + r; return HROUND_HW(t); }\n" \
 "inline float hfma(float l, float r, float acc) { float t = l * r + acc; return HROUND(t); }\n" \
 "#define COSINE_NORM_FLOOR 0.00006198883056640625f\n" \
 "inline float cosine_reciprocal(float h[32]) {\n" \
@@ -764,13 +770,14 @@ static const char *GEMM_BLK_SRC =
 " * accumulators, and a float[32] on top of them cost ~7 ms a frame. Same tree, same\n" \
 " * rounding (HROUND is pure, so rounding each read matches rounding once), `__local`. */\n" \
 "#define QKV_HR(i) HROUND(h[i])\n" \
+"#define QKV_HR_HW(i) HROUND_HW(h[i])\n" \
 "inline float cosine_reciprocal_local(__local const float *h) {\n" \
 "    float partial[4][2], two[4][2], one[4][2];\n" \
 "    for (uint lane = 0u; lane < 4u; lane++)\n" \
 "        for (uint parity = 0u; parity < 2u; parity++) {\n" \
 "            uint ch = lane * 2u + parity;\n" \
-"            float first = hfma(QKV_HR(ch + 8u), QKV_HR(ch + 8u), hmul(QKV_HR(ch), QKV_HR(ch)));\n" \
-"            float second = hfma(QKV_HR(ch + 24u), QKV_HR(ch + 24u), hmul(QKV_HR(ch + 16u), QKV_HR(ch + 16u)));\n" \
+"            float first = hfma(QKV_HR_HW(ch + 8u), QKV_HR_HW(ch + 8u), hmul(QKV_HR(ch), QKV_HR(ch)));\n" \
+"            float second = hfma(QKV_HR_HW(ch + 24u), QKV_HR_HW(ch + 24u), hmul(QKV_HR(ch + 16u), QKV_HR(ch + 16u)));\n" \
 "            partial[lane][parity] = hadd(first, second);\n" \
 "        }\n" \
 "    for (uint lane = 0u; lane < 4u; lane++)\n" \
@@ -782,7 +789,7 @@ static const char *GEMM_BLK_SRC =
 "}\n" \
 "inline float vit_reciprocal_local(__local const float *h) {\n" \
 "    float r[16];\n" \
-"    for (uint c = 0u; c < 16u; c++) r[c] = hfma(QKV_HR(c), QKV_HR(c), hmul(QKV_HR(c + 16u), QKV_HR(c + 16u)));\n" \
+"    for (uint c = 0u; c < 16u; c++) r[c] = hfma(QKV_HR_HW(c), QKV_HR_HW(c), hmul(QKV_HR(c + 16u), QKV_HR(c + 16u)));\n" \
 "    for (uint c = 0u; c < 8u; c++) r[c] = hadd(r[c], r[c + 8u]);\n" \
 "    for (uint c = 0u; c < 4u; c++) r[c] = hadd(r[c], r[c + 4u]);\n" \
 "    float norm = fmax(hadd(hadd(r[0], r[2]), hadd(r[1], r[3])), HROUND(COSINE_NORM_FLOOR));\n" \
