@@ -13,7 +13,8 @@ import xmxres, nr_model, nr_frame_resident as F
 NAME = {0: "e4m3", 1: "gate", 2: "half", 3: "to_half", 4: "scale", 5: "residual",
         6: "from_half", 7: "partition", 8: "reverse", 9: "add_bias", 10: "split_heads",
         11: "merge_heads", 12: "pool2", 13: "upsample2", 14: "scale_channel", 15: "add",
-        16: "pad_end", 17: "gate_e4m3_half", 18: "e4m3_half", 19: "gate_half"}
+        16: "pad_end", 17: "gate_e4m3_half", 18: "e4m3_half", 19: "gate_half",
+        20: "upsample_merge", 21: "upsample_add", 22: "pool2_skip"}
 WIDE, NARROW = collections.Counter(), collections.Counter()
 real = {n: getattr(xmxres.Runtime, n) for n in ("unary", "gemm", "cosine_publish", "softmax")}
 

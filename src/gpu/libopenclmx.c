@@ -1722,7 +1722,8 @@ static int run_gemm(const struct cmd *c)
 struct buffer *A = slot(c->a), *B = slot(c->b), *C = slot(c->c);
 	/* One 8-row tile per workgroup, two tiles (RM=2) when M divides, as HEAD did. The
 	 * run-to-run difference this used to be blamed for was uninitialised buffer memory,
-	 * not the compiler (see xmx_buf_create_kind and notes/AUDIT-opencl-defects.md). */
+	 * not the compiler (see xmx_buf_create_kind and notes/AUDIT-opencl-defects.md);
+	 * RM=1/4 measured slower at the frame level (110/108/187 ms), so RM=2 stands. */
 	unsigned rm = (c->M % 16u) ? 1u : 2u;
 	cl_kernel k = rm == 1u ? g.gemm_small : g.gemm;
 	unsigned rn = g.rn;
