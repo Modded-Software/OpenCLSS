@@ -643,17 +643,17 @@ static const char *GEMM_BLK_SRC =
 "typedef union { uint u; half2 h; } u32h2;\n" \
 "#define COSINE_PUBLISH 0u\n#define SOFTMAX 1u\n#define VIT_SOFTMAX 6u\n" \
 "inline float vit_weight(float logit) {\n" \
-"    float affine = HROUND(logit) * 0.08953857421875f;\n" \
+"    float affine = HROUND_HW(logit) * 0.08953857421875f;\n" \
 "    affine += 1.708984375f;\n" \
-"    affine = clamp(HROUND(affine), 1.439453125f, 1.9775390625f);\n" \
+"    affine = clamp(HROUND_HW(affine), 1.439453125f, 1.9775390625f);\n" \
 "    u32h2 c; c.h = (half2)(affine, 0.0f);\n" \
 "    uint bits = c.u & 0xFFFFu;\n" \
 "    c.u = ((bits << 4) + 0x4000u) & 0xFFFFu;\n" \
 "    return (float)c.h.s0;\n" \
 "}\n" \
 "inline void pair_fast(float l0, float l1, float *w0, float *w1) {\n" \
-"    float affine0 = clamp(HROUND(l0) * 0.044921875f + 1.30078125f, 1.03125f, 1.5693359375f);\n" \
-"    float affine1 = clamp(HROUND(l1) * 0.044921875f + 1.30078125f, 1.03125f, 1.5693359375f);\n" \
+"    float affine0 = clamp(HROUND_HW(l0) * 0.044921875f + 1.30078125f, 1.03125f, 1.5693359375f);\n" \
+"    float affine1 = clamp(HROUND_HW(l1) * 0.044921875f + 1.30078125f, 1.03125f, 1.5693359375f);\n" \
 "    u32h2 c; c.h = (half2)(affine0, affine1);\n" \
 "    uint transformed = (c.u << 5) + 0x7FF88000u;\n" \
 "    c.u = transformed;\n" \
@@ -881,7 +881,7 @@ static const char *GEMM_BLK_SRC =
 #define ATTN_SRC CL_COMMON COSINE_TREE \
 "typedef union { uint u; half2 h; } attn_h2;\n" \
 "inline float attn_affine(float l) {\n" \
-"    return clamp(HROUND(l) * 0.044921875f + 1.30078125f, 1.03125f, 1.5693359375f);\n" \
+"    return clamp(HROUND_HW(l) * 0.044921875f + 1.30078125f, 1.03125f, 1.5693359375f);\n" \
 "}\n" \
 "inline float attn_weight(uint packed_a) {\n" \
 "    attn_h2 c; c.u = 0u; c.u = ((packed_a << 5) + 0x8000u) & 0xFFFFu;\n" \
