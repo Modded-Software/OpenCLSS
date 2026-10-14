@@ -2,7 +2,8 @@
 # Run OpenCL gate tests synchronously, each under a hard timeout, and print one line per
 # test plus its first failure line. Never waits on anything unbounded.
 #   bash scripts/opencl-test.sh [--build] [--timeout SECS] [test_name ...]
-# No names: every src/gpu/test_*.py. --build rebuilds only work/libopenclmx.so.
+# No names: every src/gpu/test_*.py except the two outside `make test` (see below).
+# --build rebuilds only work/libopenclmx.so.
 # Per-test logs: notes/runs/opencl-test/<test>.log; summary: notes/runs/opencl-test.log
 set -u
 cd "$(git rev-parse --show-toplevel)" || exit 1
@@ -35,7 +36,20 @@ if [ "$BUILD" = 1 ]; then
   say "BUILD OK"
 fi
 if [ ${#TESTS[@]} -eq 0 ]; then
-  for f in src/gpu/test_*.py; do TESTS+=("$(basename "$f" .py)"); done
+  for f in src/gpu/test_*.py; do
+    t="$(basename "$f" .py)"
+    case "$t" in
+      # Deliberately outside `make test` (notes/reviewing.md): both load work/weights_ht.bin,
+      # carved from the user's own nvngx_dlssnr.dll and gitignored, so neither can run on a
+      # machine that has no such DLL - and test_layer cannot pass at all, its premise being an
+      # artefact of the superseded dense-FP16 decode. Skipped here by default so the count
+      # reflects the runnable suite; run either by naming it explicitly.
+      test_attention_gpu | test_layer)
+        say "SKIP $t: needs work/weights_ht.bin from the user's own DLL (outside make test)"
+        continue ;;
+    esac
+    TESTS+=("$t")
+  done
 fi
 PASS=0
 FAIL=0
