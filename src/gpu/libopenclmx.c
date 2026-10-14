@@ -89,6 +89,7 @@ static const char *GEMM_SRC =
 "#pragma OPENCL EXTENSION cl_intel_subgroup_matrix_multiply_accumulate : enable\n"
 "#ifndef RM\n#define RM 2\n#endif\n"
 "#ifndef RN\n#define RN 2\n#endif\n"
+"#ifndef SG\n#define SG 8\n#endif\n"
 "#ifdef GEMM_DPAS\n"
 "/* A's 8 rows and B's 8 columns as the DPAS k16 operands: 16 halves packed two to an int,\n"
 " * filled by integer ops on the raw ushort words. */\n"
@@ -123,7 +124,7 @@ static const char *GEMM_SRC =
 /* Row strides `ld`, element offsets `o` and batch strides `s` are the frame's own: a GEMM
  * reads or writes a slice of a wider buffer and batches it. Host resolves the zero-means-
  * dense defaults, so this kernel always sees real strides. `transposed` is B stored [N][K]. */
-"__attribute__((intel_reqd_sub_group_size(8)))\n"
+"__attribute__((intel_reqd_sub_group_size(SG)))\n"
 "__kernel void gemm(__global const half *A, __global const half *B, __global float *C,\n"
 "                   __global const half *Sk, __global const float *Sf,\n"
 "                   __global const float *Cos,\n"
@@ -139,7 +140,7 @@ static const char *GEMM_SRC =
 "    unsigned lane = get_sub_group_local_id();\n"
 "    __global half *Ch = (__global half *)C;\n"
 "    unsigned row = get_group_id(1) * (8 * RM);\n"
-"    unsigned col = get_group_id(0) * (8 * RN);\n"
+"    unsigned col = get_group_id(0) * (SG * RN);\n"
 "    size_t bt = get_group_id(2);\n"
 "    A += oa + bt * (size_t)sa; B += ob + bt * (size_t)sb;\n" \
 "    /* C's offsets are in output elements: move the float and half views apart, each in\n" \
@@ -166,7 +167,7 @@ static const char *GEMM_SRC =
 "        float bv[RN][8];\n"
 "#pragma unroll\n"
 "        for (unsigned c = 0; c < RN; c++) {\n"
-"            unsigned bcol = col + c * 8 + lane;\n"
+"            unsigned bcol = col + c * SG + lane;\n"
 "            if (transposed) {\n"
 "                float4 lo = vload_half4(0, B + (size_t)bcol * ldb + k);\n"
 "                float4 hi = vload_half4(0, B + (size_t)bcol * ldb + k + 4);\n"
@@ -250,7 +251,7 @@ static const char *GEMM_SRC =
 "#pragma unroll\n"
 "            for (unsigned i = 0; i < 8; i++) {\n"
 "                unsigned row_i = row + r * 8 + i;\n"
-"                unsigned cos_i = col + c * 8 + lane;\n"
+"                unsigned cos_i = col + c * SG + lane;\n"
 "                unsigned at = row_i * ldc + cos_i;\n"
 "                int ok = 1;\n"
 "                if (window_res) {\n"
@@ -1052,7 +1053,7 @@ static struct {
 	cl_kernel attn;             /* the window attention finished on-chip (P3) */
 	cl_kernel resident;
 	cl_kernel row;
-	int rm, rn;
+	int rm, rn, sg;
 	struct buffer buf[MAX_BUF];
 	struct cmd cmd[MAX_CMD];
 	int ncmd;
@@ -1295,6 +1296,21 @@ int xmx_open(void)
 				g.rn = v;
 		}
 	}
+	/* The GEMM's sub-group width, in lanes. The FMA core has no reason to sit at the DPAS
+	 * atom's 8: at SG=16 the column tile is 16*RN wide, so every B load message carries
+	 * twice the bytes and the number of workgroups halves. Measured -9.5 ms device on the
+	 * frame (82.3 -> 72.8), the ffn family 11.3 -> 7.7, bit-exact on every oracle. N is a
+	 * channel count in this model, always a multiple of 16, so the wider tile always fits.
+	 * Overridable (8 or 16) for A/B. */
+	g.sg = 16;
+	{
+		const char *e = getenv("XMX_GEMM_SG");
+		if (e) {
+			int v = atoi(e);
+			if (v == 8 || v == 16)
+				g.sg = v;
+		}
+	}
 	g.coopmat_n = 8;
 	{
 		size_t n = strlen(CL_COMMON) + strlen(GEMM_SRC) + 1;
@@ -1311,8 +1327,8 @@ int xmx_open(void)
 		 * xmx_buf_create_kind). XMX_CL_GEMM_OPTS overrides the flags for diagnosis. */
 		const char *gx = getenv("XMX_CL_GEMM_OPTS") ? getenv("XMX_CL_GEMM_OPTS") : "";
 		char o2[256], o1[256];
-		snprintf(o2, sizeof o2, "-D RN=%d %s", g.rn, gx);
-		snprintf(o1, sizeof o1, "-D RM=1 -D RN=%d %s", g.rn, gx);
+		snprintf(o2, sizeof o2, "-D SG=%d -D RN=%d %s", g.sg, g.rn, gx);
+		snprintf(o1, sizeof o1, "-D SG=%d -D RM=1 -D RN=%d %s", g.sg, g.rn, gx);
 		g.gemm = build_kernel(src, o2, "gemm");
 		g.gemm_small = build_kernel(src, o1, "gemm");
 		free(src);
@@ -1642,9 +1658,9 @@ int xmx_rec_gemm(int a, int b, int c, unsigned M, unsigned N, unsigned K, unsign
 {
 	if (!slot(a) || !slot(b) || !slot(c))
 		return fail("gemm: bad buffer");
-	if (M % 8 || N % (8 * g.rn) || K % 16)
+	if (M % 8 || N % ((unsigned)g.sg * g.rn) || K % 16)
 		return fail("gemm %ux%ux%u: shape not a multiple of the %dx%d tile", M, N, K,
-			    8, 8 * g.rn);
+			    g.sg, (unsigned)g.sg * g.rn);
 	if (g.ncmd >= MAX_CMD)
 		return fail("command list full");
 	struct cmd *cm = new_cmd(0);
@@ -1782,8 +1798,8 @@ struct buffer *A = slot(c->a), *B = slot(c->b), *C = slot(c->c);
 	clSetKernelArg(k, i++, sizeof(cl_uint), &win_across);
 	clSetKernelArg(k, i++, sizeof(cl_uint), &win_pad);
 	unsigned batch = batch_n;
-	size_t work[3] = { (size_t)N / (8 * rn) * 8, (size_t)M / (8 * rm), batch };
-	size_t group[3] = { 8, 1, 1 };
+	size_t work[3] = { (size_t)N / (g.sg * rn) * g.sg, (size_t)M / (8 * rm), batch };
+	size_t group[3] = { (size_t)g.sg, 1, 1 };
 	cl_event ev = NULL;
 	cl_int err = clEnqueueNDRangeKernel(g.q, k, 3, NULL, work, group, 0, NULL,
 					    profiling() ? &ev : NULL);
@@ -2362,7 +2378,7 @@ int xmx_rec_gemm_residual(int a, int b, int c, int skip, int cosine, unsigned M,
 {
 	if (!slot(a) || !slot(b) || !slot(c) || !slot(skip) || !slot(cosine))
 		return fail("gemm_residual: bad buffer");
-	if (M % 8 || N % (8 * g.rn) || K % 16)
+	if (M % 8 || N % ((unsigned)g.sg * g.rn) || K % 16)
 		return fail("gemm_residual %ux%ux%u: bad shape", M, N, K);
 	if (g.ncmd >= MAX_CMD)
 		return fail("command list full");
@@ -2379,7 +2395,7 @@ int xmx_rec_gemm_window_residual(int a, int b, int c, int skip, int cosine, unsi
 {
 	if (!slot(a) || !slot(b) || !slot(c) || !slot(skip) || !slot(cosine) || !h || !w || !ac)
 		return fail("gemm_window_residual: bad buffer");
-	if (M % 8 || N % (8 * g.rn) || K % 16)
+	if (M % 8 || N % ((unsigned)g.sg * g.rn) || K % 16)
 		return fail("gemm_window_residual %ux%ux%u: bad shape", M, N, K);
 	if (g.ncmd >= MAX_CMD)
 		return fail("command list full");
