@@ -1,64 +1,52 @@
 # Porting the frame to OpenCL (Intel DG2 / Arc A-series)
 
-Status: **plan**, 2026-10-13. Target: the 1024x576 network field at 24-30 fps (33-41 ms
-a frame) on one A770, measured in the frame, not in a microbenchmark.
+Status: **the backend exists and runs; this is the remaining-work plan** (rev 2026-10-14,
+after Run 45). The OpenCL frame is live at **95.6 ms device** (1024x576, GPU1) against
+Vulkan's **82.3 ms**. First milestone is to beat Vulkan; then 24-30 fps (33-41 ms) on one
+A770. Every number here is measured in the frame (`frame_profile`), never a microbenchmark.
 
-## 1. Why
+## 1. Where the frame time is
 
-The Vulkan frame is 82.3 ms of device time (1024x576, `frame_profile`, Run 26):
+OpenCL at 1024x576 on GPU1 (`frame_profile --calls`, Run 45); Vulkan's column is Run 26:
 
-| pass family | ms | passes | share |
-|---|---:|---:|---:|
-| GEMM (staged, all epilogues) | 41.4 | 318 | 50 % |
-| window block (fused C=32 attention half) | 22.5 | 10 | 27 % |
-| ffn fused (+ merge, stem) | 8.5 | 10 | 10 % |
-| window attention | 8.0 | 52 | 10 % |
-| global attention | 1.1 | 8 | 1 % |
-| unary (upsample add, e4m3 half, pool2, pad) | 0.7 | 17 | 1 % |
+| pass family | OpenCL ms | Vulkan ms | passes | us each |
+|---|---:|---:|---:|---:|
+| GEMM (all epilogues, 8x16 staged) | 60.7 | 41.4 | 339 | 179 |
+| row: window attention | 15.6 | 8.0 | 62 | 251 |
+| ffn fused (+ merge, stem) | 14.3 | 8.5 | 10 | 1425 |
+| row: global attention | 1.9 | 1.1 | 8 | 236 |
+| unary (partition, pool2, upsample, e4m3, pad) | 3.3 | 0.7 | 83 | |
+| **device total** | **95.6** | **82.3** | 499 | |
+| host overhead (recording, numpy, the rest) | 20.9 wall | | | |
 
-All of it runs at 4-10 % of the card. Mesa's cooperative-matrix lowering on DG2 turns
-every tile load into scalar SLM or global messages (~650 instructions per 4 DPAS in the
-staged K loop, `notes/phase77`), and Vulkan has no way to ask for anything else: ANV
-exposes no Intel subgroup block-IO extension (`vulkaninfo`: only
-`VK_INTEL_shader_integer_functions2`). Every kernel tweak inside that ceiling has moved
-the frame by +-10 % (Runs 17, 24, 26, 27).
+Two measurements now decide the plan, and both close the original premise of the port:
 
-Intel's OpenCL compiler (IGC, compute-runtime 26.27) exposes what is missing:
-`intel_sub_group_block_read*` (one message a tile), `intel_sub_group_f16_f16_matrix_mad_k16`
-(DPAS on plain registers, so pre-packed VNNI operands go straight in),
-`cl_intel_subgroup_local_block_io` (block SLM I/O) and `cl_intel_media_block_io`
-(2D reads). Measured (Run 28, `src/bench/opencl_gemm8_blk.cl`, numerically identical to
-the scalar kernel):
+- **DPAS is closed (Run 45).** The block-read kernel benches at 16.5 TF/s on GPU1, yet
+  in the frame the block path takes 1617/2149 calls and moves device time **0 %** (94.77 vs
+  the FMA baseline 95.75); the 16x16 tile is worse (104.79). The GEMM family is **196
+  GFLOP/frame at ~3.35 TFLOP/s, arithmetic intensity ~31** - under even the 7.4 TF/s FMA
+  ceiling and nowhere near 512 GB/s. It is not multiply-bound, so XMX cannot help it.
+- **The GEMM is flat across ~25 shapes at 2-4 ms each.** The huge-M skinny ones (589824 or
+  147456 x 32/96 x 32/128) run at **1.3-1.6 TF/s**: M/(8*rm) = 36864+ workgroups of 8
+  threads. The cost is workgroup count / occupancy and the per-element publish epilogue, not
+  the atom.
 
-| shape | Vulkan staged | OpenCL block reads |
-|---|---:|---:|
-| 960x1536x512 | ~9.0 TF | 33.4 TF |
-| 192x4096x1024 | ~8.7 TF | 32.4 TF |
-| 4096x1024x4096 | ~10.0 TF | 25.7 TF |
-| 9216x128x128 | ~7.0 TF | 15.4 TF |
-| 36864x128x64 | ~7.0 TF | 9.7 TF (memory-bound, fp32 out) |
-
-Run 23 found the OpenCL frame *slower* (201 ms, fusions off). That used the scalar-gather
-kernel and none of the fused passes, so it does not predict this port. It does set the bar:
-**each family is ported fused, and wins in the frame, or the port stops there.**
+The reason OpenCL is still the right runtime stands where it matters - IGC exposes the
+subgroup block-IO and DPAS extensions Mesa cannot reach (`VK_INTEL_shader_integer_functions2`
+is all ANV offers) - but those are not the GEMM lever. The port is accepted on frame speed.
 
 ## 2. What exists
 
-- `src/gpu/libopenclmx.c` (1309 lines): the same `xmx_*` C ABI as `libxmx.c`, so
-  `xmxres.py`, `nr_frame_resident.py` and `src/ref/nr_frame.c` need no new calls.
-  Working: buffer layer with phase65's discrete split (Run 21), general strided/batched/
-  transposed GEMM, group-GEMM offsets (Run 22), unary, row, copy, `XMX_TIME` events (Run 23).
-  Stubs (return 0 and do nothing): `rec_gemm_residual`, `_window_residual`(`_pool`),
-  `_qkv`, `_qkv_window`, `_dual`, `rec_qkv`, `rec_window_attention`, `rec_ffn`(`_merge`,
-  `_stem`), `rec_window_block`, `rec_global_attention`, `rec_history`, `rec_gemm_int8`,
-  and every `xmx_profile_*`.
-- Not wired: `NR_GPU_BACKEND=opencl` is refused by `src/nr_build.py` and
-  `src/ref/nr_frame.c` (Runs 21-23 used an uncommitted selector); no Makefile target.
-- The live path is safe: the Vulkan layer only copies frames to `nr_daemon.py`, a separate
-  process, so the daemon can run on OpenCL with no layer change. Only `nr_frame_adopt_vulkan`
-  (in-process device sharing) has no OpenCL equivalent; it keeps Vulkan.
-- No `cl_khr_command_buffer` on this driver: a frame is ~410 `clEnqueueNDRangeKernel`
-  calls on one in-order queue (ordering is implicit; no barriers needed).
+- `src/gpu/libopenclmx.c` (~2900 lines): the same `xmx_*` C ABI as `libxmx.c`, so
+  `xmxres.py`, `nr_frame_resident.py` and `src/ref/nr_frame.c` need no new calls. The whole
+  fused frame runs on it: general strided/batched/transposed GEMM, the fused QKV-epilogue
+  projection (Run 43), the fused on-chip window attention (Run 42), the fused FFN, unary,
+  row, copy, `XMX_TIME` events, `xmx_graph_capture/run`, and `xmx_profile_*` with the same
+  kind numbers as libxmx. Device selection is `XMX_DEVICE` (GPU index; two A770 devices
+  share one platform).
+- The default GEMM is the register-blocked FMA core (Run 24/43). The block-read DPAS kernel
+  is present behind `XMX_CL_BLK` and off (Run 45).
+- `NR_GPU_BACKEND=opencl` is wired in `src/nr_build.py`; the default stays Vulkan.
 
 ## 3. Design
 
@@ -68,28 +56,26 @@ does not learn about OpenCL; `xmx_rec_*` keeps recording into a command list, an
 argument blocks resolved (buffer handles, offsets, grids), so a replayed frame is only
 `clSetKernelArg` + enqueue.
 
-**Kernel sources in files.** Kernels move out of C string literals into `src/gpu/opencl/*.cl`
-(one per family, shared `publish.clh` / `cosine_tree.clh` mirroring the GLSL includes), built
-once per process with `-cl-std=CL3.0` and the family's `-D` specialisations, and cached as
-device binaries (`clGetProgramInfo(CL_PROGRAM_BINARIES)`) under `work/clcache/` keyed by
-source hash + driver version, so the daemon does not pay IGC compile time on every launch.
+**Kernels are C string literals today** (`GEMM_SRC`, `ATTN_SRC`, `RESIDENT_SRC`, ... in
+`libopenclmx.c`), built once per process with the family's `-D` specialisations. Moving them
+to `src/gpu/opencl/*.cl` with a `work/clcache/` device-binary cache (keyed by source hash +
+driver version) so the daemon does not pay IGC compile time on every launch is P4, not yet
+done. `CL_COMMON` sets `#pragma OPENCL FP_CONTRACT OFF`, which the publish epilogue's
+rounding depends on.
 
-**GEMM: one kernel family, epilogues as specialisations.** The block-read DPAS core
-(subgroup 8, RMxRN atoms of 8x8x16) with every epilogue `libxmx.c:record_gemm` dispatches:
-plain / half out, e4m3 publish, gate, residual with cosine, window residual (scatter
-back to the image), window residual + 2x2 pool, QKV epilogue (normalise Q and K, scale,
-publish) with and without the window gather, and the dual (half copy) store. The A-side
-gathers (window gather, half image) become the address computation of the block read; a
-non-contiguous A row is read with per-row `block_read` (8 lanes x 32 bits, still one message).
-Tails: M % 8 and N % 8 via a masked last tile, never via padding the graph.
+**GEMM: one kernel family, epilogues as specialisations.** The register-blocked FMA core
+with every epilogue `libxmx.c:record_gemm` dispatches, which is what ships: plain / half out,
+e4m3 publish, gate, residual with cosine, window residual (scatter back to the image),
+window residual + 2x2 pool, QKV epilogue (normalise Q and K, scale, publish) with and without
+the window gather, and the dual (half copy) store. Subgroup 8, RMxRN atoms of 8x8x16. Tails:
+M % 8 and N % 8 via a masked last tile, never via padding the graph. A block-read DPAS
+variant of the same kernel exists behind `XMX_CL_BLK`; it is off because it does not move the
+frame (Run 45). Raising the atom above 2 atoms is the open question in P1.
 
-**Weights in VNNI.** A GEMM's B operand is pre-packed into fragment order
-(`pack_vnni` in `opencl_gemm8.py`): one 256-byte `block_read8` an atom. Weights are uploaded
-once, so the backend packs them at upload into a second device buffer keyed by
-(buffer, offset, K, N, ldb) and drops the copy when the buffer is re-uploaded or destroyed.
-A B that is an activation (attention's K and V inside the fused kernels, any non-weight B)
-takes the row-major path: `intel_sub_group_block_read_us` per K row pair, or a media block
-read where the extent allows. The rule is decided by buffer kind, not guessed per call.
+**Weights in VNNI (block-read path only).** When `XMX_CL_BLK` is on, a GEMM's B operand is
+pre-packed into fragment order (`pack_vnni` in `opencl_gemm8.py`): one 256-byte `block_read8`
+an atom, cached per buffer and generation in `ensure_packed`. Off, B is read row-major
+directly by the FMA core.
 
 **Fused passes: same arithmetic, new loads.** Each fused kernel is ported from its GLSL
 with the operations in the same order (`cosine_tree`, the softmax transform, publish), so
@@ -116,78 +102,77 @@ the gate. The gate is the reference.
    `work/video/ghost-full-rs05/in/`): PSNR and MAE against the Vulkan output, plus the owner's
    look. Graphical verdicts are the owner's (AGENTS.md).
 
-## 5. Phases
+## 5. Remaining work
 
-Each phase ends with: the tests above for what it touched, `frame_profile` on both
-backends, a diary entry with error counts, and a commit. A phase that loses in the frame
-is recorded and either fixed or stopped. It is never merged on a microbenchmark.
+Each item ends with: the tests above for what it touched, `frame_profile` on OpenCL (and
+Vulkan where it moved), a diary entry with error counts, and a commit. An item that does not
+move the frame is recorded and either fixed or dropped. It is never merged on a
+microbenchmark.
 
-**P0 - plumbing (no speed yet).**
-`NR_GPU_BACKEND=opencl` in `nr_build.py`, `xmx.py`, `nr_frame.c`; Makefile target
-`work/libopenclmx.so` (gcc-13, `libOpenCL.so.1`, no CL headers needed: the declarations stay
-local as now); `src/gpu/opencl/` source loading and the binary cache; `xmx_profile_*` from
-`cl_event` timestamps with the same kind numbers as libxmx, so `frame_profile.py`,
-`iterate.sh` and `runs.jsonl` work unchanged; `iterate.sh` takes `NR_GPU_BACKEND` from `ENV`.
-Exit: the Vulkan-only parts of `make test` still pass, and the OpenCL backend runs the
-unfused frame (Run 23's 201 ms) with a per-pass table.
+**P1 - the GEMM (60.7 ms, 339 passes, 179 us each).** Two measured levers, in order:
 
-**P1 - GEMM (50 % of the frame).**
-Block-read kernel with strides, offsets, batch, transpose, tails; then the epilogues in
-order of frame time: plain + publish (`gemm 2304x128x256 x8`, `9216x128x128 x4`, ...),
-residual, QKV + window gather, window residual (+ pool), dual. VNNI weight packing at upload.
-Per-shape tile choice (RMxRN, subgroup) from a sweep over the 68 frame shapes
-(`src/bench/census.py` shapes, `replay.py`), table compiled into the backend.
-Also: why tiles above 8 atoms collapse (IGC dump: `IGC_ShaderDumpEnable=1`,
-`IGC_DumpToCustomDir`), since a 32x32 tile is the textbook DG2 optimum.
-Exit: frame GEMM time under Vulkan's 41.4 ms by at least 2x (aim 15-20 ms), gates 1-2.
+1. **Occupancy on the huge-M skinny shapes** (589824/147456 x 32/96 x 32/128, 1.3-1.6 TF/s).
+   Today a workgroup is 8 threads - one subgroup, RMxRN = 2x1 - and a 589824-row shape makes
+   36864+ of them. Raise threads a workgroup: **several N-subgroups that share one loaded A
+   tile** (RN subgroups, each an 8-column strip), and/or an M tile above 2 atoms. This is not
+   the private-array 4x4 tile Run 39 measured (that was slower); here the extra work is other
+   subgroups reusing A, not a bigger per-thread register file.
+2. **The publish epilogue** (~35 ms of the 62, Run 43; half of it `HROUND`). Publish in place
+   from the accumulator where the store allows, instead of a half round-trip.
+3. Leave the block-read DPAS kernel off (`XMX_CL_BLK`) until a shape actually waits on the
+   multiply (Run 45).
 
-**P2 - elementwise and history.** `rec_history`, the unary/row kinds the fused frame uses,
-`rec_qkv`. Small (0.7 ms), but needed for a whole fused frame.
+Exit: GEMM under Vulkan's 41.4 ms, gates 1-2.
 
-**P3 - fused attention and FFN, in order of frame time.**
-1. `window_block` (22.5 ms): one 8x8 window a workgroup today, 16 KB SLM, 8 KB of weights
-   re-read per window, 75 spills. Port as is first, then: several windows a workgroup so the
-   QKV/projection weights are loaded once into SLM by block read; Q, K, V and logits in DPAS
-   registers at subgroup 8 (an 8x8 fp32 accumulator is one register a lane there, not 4).
-2. `ffn_fused` + merge + stem (8.5 ms).
-3. `window_attention` (8.0 ms, 52 passes).
-4. `global_attention` (1.1 ms).
-Exit per kernel: faster than its Vulkan pass in the frame, gate 1. Whole-family exit: gates 2-3.
+**P2 - host overhead (20.9 ms wall over device).** 499 enqueues a frame plus numpy recording.
+Overlap with the device on the in-order async queue and measure enqueue cost in the frame;
+1-4 ms of host time is fine only if it hides behind the GPU.
+
+**P3 - the fused passes, by frame time.**
+
+1. `window attention` (15.6 ms, 62 passes, 251 us each): the per-token rows and the
+   split/merge schedules; the on-chip fused version already replaced the decomposed passes
+   (Run 42).
+2. `ffn fused` (14.3 ms, 10 passes, 1425 us each): the 589824x32x128 merge and stem dominate
+   at 1.3 TF/s - the same occupancy problem as P1, inside the fused kernel.
+3. `global attention` (1.9 ms).
+
+Exit per kernel: faster than its Vulkan pass in the frame; gate 1.
 
 **P4 - the live path.** `nr_daemon.py` and `nr_frame --replay`/`--stream` on
-`NR_GPU_BACKEND=opencl`; first-launch compile time measured with the binary cache cold and
-warm; the owner plays it through `18-launch-user.sh` with the layer.
+`NR_GPU_BACKEND=opencl`; the binary cache keeps IGC's first-launch compile off the critical
+path; the owner plays it through `18-launch-user.sh`.
 
-**P5 - past one GPU, if P1-P3 land short.** The two-GPU alternate-frame feeder (Run 25:
-two devices do not contend; stale history measured as a legitimate render) and/or
-`NR_DEEP_CACHE`. Both are orthogonal to the backend and stack on it.
+**P5 - past one GPU.** The two-GPU alternate-frame feeder (Run 25: two devices do not
+contend; stale history measured as a legitimate render) and/or `NR_DEEP_CACHE`. Both are
+orthogonal to the backend and stack on it.
 
 ## 6. Budget (what has to be true for 24-30 fps)
 
-| family | Vulkan | target | basis |
-|---|---:|---:|---|
-| GEMM | 41.4 | 15-20 | 2-3.7x measured on frame shapes; small-N shapes nearer 1.5-2x |
-| window block | 22.5 | 8-11 | weights loaded once a workgroup, no spills, DPAS at SG8 |
-| ffn fused | 8.5 | 4-5 | same GEMM core inside |
-| window attention | 8.0 | 4-5 | block SLM I/O, SG8 accumulators |
-| global + unary + history | 1.8 | 1.8 | |
-| host / enqueue | (9.9 wall) | <= 5 | 410 enqueues; overlap with device via in-order async queue |
-| **device total** | **82.3** | **33-43** | |
+| family | Vulkan | OpenCL now | target | basis |
+|---|---:|---:|---:|---|
+| GEMM | 41.4 | 60.7 | 15-20 | not multiply-bound; workgroup count + epilogue (Run 45) |
+| window attention | 8.0 | 15.6 | 4-5 | 62 passes at 251 us |
+| ffn fused | 8.5 | 14.3 | 4-5 | occupancy inside the kernel |
+| global + unary + history | 1.8 | 5.0 | 1.8 | |
+| host / enqueue | (9.9 wall) | 20.9 | <= 5 | 499 enqueues; overlap with device via in-order async queue |
+| **device total** | **82.3** | **95.6** | **33-43** | |
 
 The upper end of the range meets the target with one GPU. If it lands at 43-50 ms, P5's
 second GPU covers the rest.
 
 ## 7. Risks
 
-- **Small-N shapes** (N = 32-128, M up to 590 k) are half the GEMM passes and gain least
-  from block reads. They are bandwidth- and occupancy-bound; the lever is fusion (the
-  epilogue writes half and publishes in place) and wider M tiles, not DPAS rate.
-- **Enqueue overhead without command buffers**: ~410 enqueues a frame at a few us each is
-  1-4 ms of host time. That's acceptable if it overlaps device execution. Measure in P0.
-- **IGC register allocation cliff** (Run 28: >8 atoms collapses with no reported spill):
-  understand it in P1 or the tile sizes stay small.
+- **Small-N shapes** (N = 32-128, M up to 590 k) are half the GEMM passes and run at
+  1.3-1.6 TF/s. The lever is occupancy (more subgroups a workgroup) and publishing the
+  epilogue in place, not DPAS rate (Run 45).
+- **Enqueue overhead without command buffers**: 499 enqueues a frame at a few us each is
+  1-4 ms of host time, on top of 20.9 ms of recording/numpy. Only free if it overlaps the
+  device. This is P2.
 - **Numerics**: RTE versus DG2-Vulkan's driver-default rounding; e4m3 publish emulation must
-  match `publish.glsl` bit for bit on its own inputs (unit test on all 65 536 halves).
+  match `publish.glsl` bit for bit on its own inputs (unit test on all 65 536 halves). The
+  suite's cross-kernel comparisons are bit-exact, so the OpenCL paths must agree with each
+  other exactly even though they need not equal Vulkan.
 - **Two runtimes in the tree**: Vulkan stays the default and the reference for the
   portable/Xe2/Metal/D3D12 paths; OpenCL is opt-in until P4 passes, then the DG2 default.
 

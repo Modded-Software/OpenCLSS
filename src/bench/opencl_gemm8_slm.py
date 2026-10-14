@@ -4,7 +4,7 @@
 Workgroup tile BM x BN x BK, SGM x SGN subgroups of 8, each subgroup an RM x RN block of
 8x8x16 atoms.  Same ctypes harness as opencl_gemm8.py.
 """
-import argparse, ctypes, pathlib, time
+import argparse, ctypes, os, pathlib, time
 import numpy as np
 
 CL = ctypes.CDLL("libOpenCL.so")
@@ -119,7 +119,7 @@ def main():
     ap.add_argument("--bk", type=int, default=32)
     ap.add_argument("--rm", type=int, default=2)
     ap.add_argument("--rn", type=int, default=2)
-    ap.add_argument("--device", type=int, default=0)
+    ap.add_argument("--device", type=int, default=int(os.environ.get("XMX_DEVICE", "0")))
     ap.add_argument("--check", action="store_true")
     args = ap.parse_args()
     M, N, K = (int(v) for v in args.shape.split(","))

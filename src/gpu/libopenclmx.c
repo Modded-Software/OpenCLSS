@@ -46,6 +46,7 @@ typedef struct _cl_event *cl_event;
 #define CL_PROFILING_COMMAND_START 0x1282
 #define CL_PROFILING_COMMAND_END 0x1283
 #define CL_DEVICE_TYPE_GPU (1 << 2)
+#define CL_DEVICE_NAME 0x102B
 #define CL_MEM_READ_WRITE (1 << 0)
 #define CL_MEM_COPY_HOST_PTR (1 << 5)
 #define CL_MEM_USE_HOST_PTR (1 << 3)
@@ -55,6 +56,7 @@ typedef struct _cl_event *cl_event;
 
 extern cl_int clGetPlatformIDs(cl_uint, cl_platform_id *, cl_uint *);
 extern cl_int clGetDeviceIDs(cl_platform_id, cl_device_type, cl_uint, cl_device_id *, cl_uint *);
+extern cl_int clGetDeviceInfo(cl_device_id, cl_uint, size_t, void *, size_t *);
 extern cl_context clCreateContext(const cl_int *, cl_uint, const cl_device_id *, void *, void *, cl_int *);
 extern cl_command_queue clCreateCommandQueue(cl_context, cl_device_id, cl_command_queue_properties, cl_int *);
 extern cl_program clCreateProgramWithSource(cl_context, cl_uint, const char **, const size_t *, cl_int *);
@@ -1234,12 +1236,34 @@ int xmx_open(void)
 	g.total = 0;
 	if (clGetPlatformIDs(8, plats, &nplat) != CL_SUCCESS || nplat == 0)
 		return fail("no OpenCL platform");
-	for (cl_uint p = 0; p < nplat; p++) {
-		if (clGetDeviceIDs(plats[p], CL_DEVICE_TYPE_GPU, 1, &g.dev, &ndev) == CL_SUCCESS && ndev)
-			break;
+	/* Every GPU across every platform, in enumeration order, so XMX_DEVICE picks one by
+	 * index: the box has two Intel GPUs and the display is on the first, so a benchmark
+	 * wants the second. An out-of-range index is clamped to the last device. */
+	cl_device_id devs[16];
+	cl_uint nfound = 0;
+	for (cl_uint p = 0; p < nplat && nfound < 16; p++) {
+		cl_uint nd = 0;
+		if (clGetDeviceIDs(plats[p], CL_DEVICE_TYPE_GPU, 16 - nfound, devs + nfound, &nd) == CL_SUCCESS)
+			nfound += nd;
 	}
-	if (!g.dev)
+	if (nfound == 0)
 		return fail("no OpenCL GPU device");
+	cl_uint pick = 0;
+	const char *want = getenv("XMX_DEVICE");
+	if (want && *want) {
+		long v = strtol(want, NULL, 10);
+		if (v > 0)
+			pick = (cl_uint)v;
+	}
+	if (pick >= nfound)
+		pick = nfound - 1;
+	g.dev = devs[pick];
+	{
+		char name[128] = "?";
+		clGetDeviceInfo(g.dev, CL_DEVICE_NAME, sizeof name, name, NULL);
+		fprintf(stderr, "[XMX] OpenCL device %u/%u: %s\n", pick, nfound, name);
+	}
+	ndev = nfound;
 	g.ctx = clCreateContext(NULL, 1, &g.dev, NULL, NULL, &err);
 	if (!g.ctx)
 		return fail("clCreateContext: %d", err);

@@ -192,7 +192,7 @@ def main():
     ap.add_argument("--blocks", default="1x1,2x2,4x4,8x8")
     ap.add_argument("--shape", default="192,4096,1024")
     ap.add_argument("--kunroll", type=int, default=1)
-    ap.add_argument("--device", type=int, default=0)
+    ap.add_argument("--device", type=int, default=int(os.environ.get("XMX_DEVICE", "0")))
     ap.add_argument("--check", action="store_true")
     args = ap.parse_args()
     M, N, K = (int(v) for v in args.shape.split(","))
