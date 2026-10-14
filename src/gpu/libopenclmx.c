@@ -1344,8 +1344,11 @@ int xmx_open(void)
 			snprintf(src, n, "%s%s", CL_COMMON, GEMM_QKV_SRC);
 			const char *gx = getenv("XMX_CL_GEMM_OPTS") ? getenv("XMX_CL_GEMM_OPTS") : "";
 			char oq[256];
-			/* The QKV epilogue's two subgroups cover a fixed 32-column block, so
-			 * this kernel's RN is 2 whatever XMX_GEMM_RN tunes the plain GEMM to. */
+			/* The QKV epilogue's two 8-lane subgroups cover a fixed 32-column block, so
+			 * this kernel's RN is 2 whatever XMX_GEMM_RN tunes the plain GEMM to. Widening
+			 * these lanes to 16 (one sub-group over the same block) is exact but much
+			 * slower in-frame - gemm 48.8 -> 65.3 ms, Run 52 - so the plain GEMM's SG=16
+			 * does not extend here. */
 			snprintf(oq, sizeof oq, "-D RM=2 -D RN=2 %s", gx);
 			g.gemm_qkv = build_kernel(src, oq, "gemm_qkv");
 			if (g.gemm_qkv)
