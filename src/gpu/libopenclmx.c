@@ -2113,11 +2113,24 @@ static int execute(const struct cmd *list, int n)
 			return fail("push host-write buffer: %d", -1);
 		}
 	}
+	/* XMX_FLUSH=N: submit to the device every N commands instead of only at the closing
+	 * clFinish, so the GPU starts running while the host is still recording/enqueuing the
+	 * rest of the frame. On an in-order flush-submitted queue the device otherwise sits idle
+	 * through the whole host-side prologue (the IWOCL deck's "GPU idle during enqueue").
+	 * Default 64 (measured -5 ms wall, device-neutral); XMX_FLUSH=0 disables. */
+	int flush_every = 64;
+	{
+		const char *fe = getenv("XMX_FLUSH");
+		if (fe)
+			flush_every = atoi(fe);
+	}
 	for (int i = 0; i < n; i++) {
 		if (exec_traced(&list[i])) {
 			free(pull);
 			return -1;
 		}
+		if (flush_every > 0 && ((i + 1) % flush_every) == 0)
+			clFlush(g.q);
 	}
 	clFinish(g.q);
 	trace_sum();
